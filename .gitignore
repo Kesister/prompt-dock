@@ -20,3 +20,11 @@
 !/assets/author-wechat-qr.jpg
 !/assets/PromptDock.WinHelper.cs
 !/assets/PromptDock.WinHelper.exe
+
+!/scripts/
+/scripts/*
+!/scripts/build-mac.js
+!/scripts/smoke-test.js
+!/scripts/native-paste-target.swift
+!/scripts/verify-backup.js
+!/assets/PromptDock.MacHelper.swift

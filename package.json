@@ -8,7 +8,12 @@
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --win portable",
-    "dist:installer": "electron-builder --win nsis"
+    "dist:installer": "electron-builder --win nsis",
+    "build:mac-helper": "node scripts/build-mac.js",
+    "start:mac": "npm run build:mac-helper && electron .",
+    "dist:mac": "npm run build:mac-helper && electron-builder --mac dmg zip --arm64",
+    "test:smoke:mac": "npm run test:smoke",
+    "test:smoke": "node scripts/smoke-test.js"
   },
   "dependencies": {
     "adm-zip": "^0.6.0"
@@ -28,7 +33,9 @@
       "renderer.js",
       "index.html",
       "styles.css",
-      "assets/**/*",
+      "assets/*.png",
+      "assets/*.jpg",
+      "assets/*.ico",
       "package.json"
     ],
     "asarUnpack": [
@@ -38,6 +45,9 @@
       "icon": "assets/app.ico",
       "target": [
         "portable"
+      ],
+      "files": [
+        "assets/PromptDock.WinHelper.exe"
       ]
     },
     "nsis": {
@@ -54,6 +64,22 @@
       "installerLanguages": [
         "zh_CN",
         "en_US"
+      ]
+    },
+    "mac": {
+      "category": "public.app-category.productivity",
+      "icon": "assets/logo.png",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "artifactName": "Prompt-Dock-${version}-mac-${arch}.${ext}",
+      "identity": "-",
+      "extraResources": [
+        {
+          "from": "build/PromptDock.MacHelper",
+          "to": "PromptDock.MacHelper"
+        }
       ]
     }
   }

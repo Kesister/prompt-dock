@@ -1,3 +1,5 @@
+const IS_MAC = window.promptDock.platform === "darwin";
+const DEFAULT_NEW_SHORTCUT = IS_MAC ? "Command+N" : "Control+N";
 let state;
 let selectedId = null;
 let currentFilter = "all";
@@ -1283,7 +1285,7 @@ function updateContextualMainAction() {
     $("#newPromptBtn").title = "批量添加词条";
     $("#newPromptBtn").removeAttribute("aria-keyshortcuts");
   } else {
-    const shortcut = state.settings.newPromptShortcut || "Control+N";
+    const shortcut = state.settings.newPromptShortcut || DEFAULT_NEW_SHORTCUT;
     $("#newPromptBtn").title = `新建 Prompt（${displayAccelerator(shortcut)}）`;
     $("#newPromptBtn").setAttribute("aria-keyshortcuts", normalizeAccelerator(shortcut));
   }
@@ -1330,7 +1332,9 @@ function renderAll() {
   document.body.classList.toggle("batch-mode", batchMode);
   $("#batchToolbar").classList.toggle("hidden", !batchMode);
   updateBatchToolbar();
-  $("#shortcutBadge").textContent = "Ctrl K";
+  $("#shortcutBadge").textContent = IS_MAC ? "⌘ K" : "Ctrl K";
+  $("#vocabularyShortcutBadge").textContent = IS_MAC ? "⌘ K" : "Ctrl K";
+  $("#lightboxCopyImage").title = `复制图片（${IS_MAC ? "⌘C" : "Ctrl+C"}）`;
   updateContextualMainAction();
 }
 
@@ -1706,29 +1710,31 @@ async function usePrompt(mode, variantId = activeVariantId) {
 
 function eventToAccelerator(event) {
   const modifiers = [];
+  if (IS_MAC && event.metaKey) modifiers.push("Command");
   if (event.ctrlKey) modifiers.push("Control");
   if (event.altKey) modifiers.push("Alt");
   if (event.shiftKey) modifiers.push("Shift");
-  if (event.metaKey) modifiers.push("Super");
+  if (!IS_MAC && event.metaKey) modifiers.push("Super");
   const ignored = ["Control", "Alt", "Shift", "Meta"];
   if (ignored.includes(event.key)) return "";
-  let key = event.key.length === 1 ? event.key.toUpperCase() : event.key;
+  let key = /^(Key[A-Z]|Digit[0-9])$/.test(event.code) ? event.code.replace(/^(Key|Digit)/, "") : event.key.length === 1 ? event.key.toUpperCase() : event.key;
   const names = { " ": "Space", Escape: "Esc", ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right" };
   key = names[key] || key;
   return modifiers.length ? [...modifiers, key].join("+") : "";
 }
 
 function normalizeAccelerator(value) {
-  const aliases = { ctrl: "Control", control: "Control", alt: "Alt", shift: "Shift", win: "Super", meta: "Super", super: "Super", command: "Super", cmd: "Super" };
+  const command = IS_MAC ? "Command" : "Super";
+  const aliases = { ctrl: "Control", control: "Control", alt: "Alt", shift: "Shift", win: "Super", meta: command, super: command, command: command, cmd: command };
   const parts = String(value || "").split("+").map((part) => part.trim()).filter(Boolean);
-  const modifiers = ["Control", "Alt", "Shift", "Super"];
+  const modifiers = IS_MAC ? ["Command", "Control", "Alt", "Shift"] : ["Control", "Alt", "Shift", "Super"];
   const mapped = parts.map((part) => aliases[part.toLocaleLowerCase()] || (part.length === 1 ? part.toUpperCase() : part));
   const key = mapped.find((part) => !modifiers.includes(part));
   return key ? [...modifiers.filter((modifier) => mapped.includes(modifier)), key].join("+") : "";
 }
 
 function displayAccelerator(value) {
-  return normalizeAccelerator(value).replace("Control", "Ctrl").replace("Super", "Win");
+  return normalizeAccelerator(value).replace("Control", IS_MAC ? "⌃" : "Ctrl").replace("Command", "⌘").replace("Alt", IS_MAC ? "⌥" : "Alt").replace("Shift", IS_MAC ? "⇧" : "Shift").replace("Super", "Win");
 }
 
 function eventMatchesAccelerator(event, accelerator) {
@@ -1738,7 +1744,7 @@ function eventMatchesAccelerator(event, accelerator) {
 function validateNewPromptShortcut(value, globalValue = state.settings.shortcut) {
   const normalized = normalizeAccelerator(value);
   if (!normalized) return "请录制一个包含修饰键的快捷键。";
-  if (normalized === "Control+K") return "Ctrl+K 已用于聚焦搜索，请换一个组合键。";
+  if (normalized === (IS_MAC ? "Command+K" : "Control+K")) return `${IS_MAC ? "⌘K" : "Ctrl+K"} 已用于聚焦搜索，请换一个组合键。`;
   if (normalized === normalizeAccelerator(globalValue)) return "不能与全局唤出快捷键相同。";
   return "";
 }
@@ -2063,14 +2069,14 @@ $("#settingsBtn").addEventListener("click", () => {
   if (batchMode) setBatchMode(false);
   if (state.settings.compactMode) setCompactSidebarOpen(false);
   $("#shortcutField").value = state.settings.shortcut;
-  $("#newPromptShortcutField").value = state.settings.newPromptShortcut || "Control+N";
+  $("#newPromptShortcutField").value = state.settings.newPromptShortcut || DEFAULT_NEW_SHORTCUT;
   $("#alwaysOnTopField").checked = Boolean(state.settings.alwaysOnTop);
   $("#alwaysOnTopField").disabled = Boolean(state.settings.compactMode);
   $("#privacyHideImagesField").checked = Boolean(state.settings.privacyHideImages);
   $("#backupDirectoryField").value = state.settings.backupDirectory || "";
   $("#shortcutHint").textContent = "点击“录制”，然后按下新的组合键。";
   $("#shortcutHint").classList.remove("error");
-  $("#newPromptShortcutHint").textContent = "默认 Ctrl+N，不会影响其他软件的新建快捷键。";
+  $("#newPromptShortcutHint").textContent = `默认 ${IS_MAC ? "⌘N" : "Ctrl+N"}，不会影响其他软件的新建快捷键。`;
   $("#newPromptShortcutHint").classList.remove("error");
   $("#importResult").classList.add("hidden");
   $("#settingsDialog").showModal();
@@ -2309,7 +2315,7 @@ function endLightboxPan(event) {
 $("#lightboxStage").addEventListener("pointerup", endLightboxPan);
 $("#lightboxStage").addEventListener("pointercancel", endLightboxPan);
 $("#imageLightbox").addEventListener("keydown", (event) => {
-  if (event.ctrlKey && event.key.toLocaleLowerCase() === "c") {
+  if ((IS_MAC ? event.metaKey : event.ctrlKey) && event.key.toLocaleLowerCase() === "c") {
     event.preventDefault();
     copyCurrentLightboxImage();
     return;
@@ -2406,9 +2412,9 @@ $("#editorForm").addEventListener("submit", async (event) => {
 });
 $("#recordShortcutBtn").addEventListener("click", () => {
   recordingShortcut = "global";
-  $("#newPromptShortcutField").value = state.settings.newPromptShortcut || "Control+N";
+  $("#newPromptShortcutField").value = state.settings.newPromptShortcut || DEFAULT_NEW_SHORTCUT;
   $("#shortcutField").value = "请按下组合键…";
-  $("#shortcutHint").textContent = "至少包含 Ctrl、Alt、Shift 或 Win 中的一个。";
+  $("#shortcutHint").textContent = IS_MAC ? "至少包含 ⌘、⌥、⇧ 或 ⌃ 中的一个。" : "至少包含 Ctrl、Alt、Shift 或 Win 中的一个。";
   $("#shortcutHint").classList.remove("error");
 });
 $("#recordNewPromptShortcutBtn").addEventListener("click", () => {
@@ -2451,7 +2457,7 @@ window.addEventListener("keydown", (event) => {
     event.stopPropagation();
     if (event.key === "Escape") {
       $("#shortcutField").value = state.settings.shortcut;
-      $("#newPromptShortcutField").value = state.settings.newPromptShortcut || "Control+N";
+      $("#newPromptShortcutField").value = state.settings.newPromptShortcut || DEFAULT_NEW_SHORTCUT;
       recordingShortcut = null;
       return;
     }
@@ -2466,12 +2472,12 @@ window.addEventListener("keydown", (event) => {
     return;
   }
   if (!event.repeat && !document.querySelector("dialog[open]")
-    && eventMatchesAccelerator(event, state.settings.newPromptShortcut || "Control+N")) {
+    && eventMatchesAccelerator(event, state.settings.newPromptShortcut || DEFAULT_NEW_SHORTCUT)) {
     event.preventDefault();
     openNewPrompt();
     return;
   }
-  if (event.ctrlKey && !event.altKey && !event.shiftKey && !event.metaKey
+  if ((IS_MAC ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) && !event.altKey && !event.shiftKey
     && event.key.toLocaleLowerCase() === "k" && !document.querySelector("dialog[open]")) {
     event.preventDefault();
     const field = appMode === "vocabulary" ? $("#vocabularySearchInput") : $("#searchInput");

@@ -1,6 +1,32 @@
 # Prompt Dock
 
-一个本地优先的 Windows Prompt 桌面启动器。
+一个本地优先的 Windows / macOS Prompt 桌面启动器。
+
+Windows 与 macOS 共用本仓库的一套 Electron 界面、资料存储和导入导出逻辑，不维护独立 Mac 项目。系统能力通过平台条件分支及原生 helper 实现。平台差异、Windows 接续开发步骤和验收清单见 [跨平台开发交接](MAC-HANDOFF.md)。
+
+## macOS 开发与本地安装
+
+mac-support 分支以 Windows v0.10.13 为基线。需 Node.js 22、Xcode Command Line Tools。
+
+```sh
+npm ci
+npm run start:mac
+# 隔离测试：指定绝对路径，避免访问日常资料库
+PROMPT_DOCK_USER_DATA=/absolute/path/to/test-profile npm run start:mac
+npm run test:smoke
+npm run dist:mac
+```
+
+`dist:mac` 在 Apple Silicon Mac 构建 arm64 DMG / ZIP，使用本地 ad-hoc 签名，未作 Developer ID 签名或 Apple 公证。Intel 尚未实机验证。安装时将 DMG 内的应用拖到 Applications。
+
+Mac 内搜索为 ⌘K、新建为 ⌘N、图片复制为 ⌘C；默认全局唤出为 ⌘⌥P，可在设置录制。已有自定义设置不会因冲突而被覆盖。词库单击只复制。
+
+Prompt 单击直接粘贴由原生 Mac helper 记住最近的外部应用、激活它并发送 ⌘V；先点击目标输入框。首次使用需在系统设置 → 隐私与安全性 → 辅助功能中启用 Prompt Dock；开发运行时权限主体可能显示 Electron / MacHelper。拒绝授权时仍复制正文并提示手动 ⌘V。没有向普通输入框点击绑定反复激活窗口的逻辑。
+
+Windows `.promptdock` 在设置中导入；导入只合并资料，不带入 Windows 快捷键、备份路径等本机设置。关闭窗口后可用菜单栏、Dock 或全局快捷键恢复。普通窗口与超小窗口分别记住尺寸。
+
+以下历史功能说明里的 Ctrl 按键和 Windows helper 行为仅适用于 Windows。
+
 
 ## 功能
 
@@ -67,7 +93,7 @@
 ## 开发运行
 
 ```powershell
-npm.cmd install
+npm.cmd ci
 npm.cmd start
 ```
 

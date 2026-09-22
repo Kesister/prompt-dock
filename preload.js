@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("promptDock", {
+  platform: process.platform,
   getState: () => ipcRenderer.invoke("state:get"),
   getAppVersion: () => ipcRenderer.invoke("app:version"),
   getMigrationInfo: () => ipcRenderer.invoke("storage:migration-info"),

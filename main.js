@@ -1,4 +1,4 @@
-const { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, Tray, nativeImage, net, protocol, screen, session } = require("electron");
+const { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, Tray, nativeImage, net, protocol, screen, session, shell } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const { pathToFileURL } = require("url");
@@ -13,14 +13,25 @@ let activeShortcut = "";
 let normalWindowBounds = null;
 let pasteQueue = Promise.resolve();
 let storage;
-const DEFAULT_SHORTCUT = "Control+Alt+P";
+const IS_MAC = process.platform === "darwin";
+const DEFAULT_SHORTCUT = IS_MAC ? "Command+Alt+P" : "Control+Alt+P";
+let macHelper;
+let macReply;
+let macPermissionNoticeShown = false;
+let windowSaveTimer;
+let windowMode = false;
 const MAX_PROMPT_IMAGES = 6;
 const MAX_SOURCE_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_IMAGE_EDGE = 1600;
 const SMOKE_TEST = process.env.PROMPT_DOCK_SMOKE_TEST === "1";
+const testProfile = process.env.PROMPT_DOCK_USER_DATA;
+if (testProfile) {
+  if (!path.isAbsolute(testProfile)) throw new Error("PROMPT_DOCK_USER_DATA must be absolute");
+  app.setPath("userData", testProfile);
+}
 if (SMOKE_TEST) {
   app.disableHardwareAcceleration();
-  app.setPath("userData", path.join(app.getPath("temp"), `prompt-dock-smoke-test-${app.getVersion()}`));
+  if (!testProfile) app.setPath("userData", path.join(app.getPath("temp"), `prompt-dock-smoke-test-${randomUUID()}`));
   process.on("unhandledRejection", (error) => {
     console.error(`SMOKE_FAIL:${error?.stack || error}`);
     app.exit(2);
@@ -60,7 +71,7 @@ function initialState() {
   return {
     settings: {
       shortcut: DEFAULT_SHORTCUT,
-      newPromptShortcut: "Control+N",
+      newPromptShortcut: IS_MAC ? "Command+N" : "Control+N",
       directPaste: true,
       launchAtLogin: false,
       alwaysOnTop: false,
@@ -561,12 +572,11 @@ function registerShortcut(shortcut) {
   if (!shortcut || typeof shortcut !== "string") {
     return { ok: false, message: "快捷键格式无效" };
   }
+  if (shortcut === activeShortcut) return { ok: true, shortcut };
+  let ok = false;
+  try { ok = globalShortcut.register(shortcut, showLauncher); } catch {}
+  if (!ok) return { ok: false, message: "快捷键无效或已被其他程序占用，请换一个组合。" };
   if (activeShortcut) globalShortcut.unregister(activeShortcut);
-  const ok = globalShortcut.register(shortcut, showLauncher);
-  if (!ok) {
-    if (activeShortcut) globalShortcut.register(activeShortcut, showLauncher);
-    return { ok: false, message: "这个快捷键已被其他程序占用，请换一个组合。" };
-  }
   activeShortcut = shortcut;
   return { ok: true, shortcut };
 }
@@ -574,12 +584,14 @@ function registerShortcut(shortcut) {
 function createWindow() {
   const settings = readState().settings;
   const compactMode = Boolean(settings.compactMode);
+  windowMode = compactMode;
+  normalWindowBounds = settings.normalWindowBounds || null;
   const savedCompactSize = settings.compactWindowSize || {};
   const initialCompactWidth = Math.max(360, Number(savedCompactSize.width) || 420);
   const initialCompactHeight = Math.max(360, Number(savedCompactSize.height) || 520);
   mainWindow = new BrowserWindow({
-    width: compactMode ? initialCompactWidth : 1080,
-    height: compactMode ? initialCompactHeight : 700,
+    width: compactMode ? initialCompactWidth : Math.max(840, normalWindowBounds?.width || 1080),
+    height: compactMode ? initialCompactHeight : Math.max(560, normalWindowBounds?.height || 700),
     minWidth: compactMode ? 360 : 840,
     minHeight: compactMode ? 360 : 560,
     show: false,
@@ -594,8 +606,11 @@ function createWindow() {
       nodeIntegration: false
     }
   });
+  if (testProfile) mainWindow.on("page-title-updated", event => { event.preventDefault(); mainWindow.setTitle("Prompt Dock — 隔离测试"); });
   mainWindow.loadFile("index.html");
+  mainWindow.on("resize", scheduleWindowSave);
   mainWindow.once("ready-to-show", () => {
+    ensureWindowOnScreen();
     if (!SMOKE_TEST) mainWindow.show();
     if (pendingSecondLaunch) {
       pendingSecondLaunch = false;
@@ -605,6 +620,8 @@ function createWindow() {
   mainWindow.webContents.once("did-finish-load", async () => {
     if (!SMOKE_TEST) return;
     await new Promise((resolve) => setTimeout(resolve, 300));
+    const backupVerification = process.env.PROMPT_DOCK_TEST_BACKUP
+      ? require("./scripts/verify-backup")({ loadPromptDockFile, readState, writeState, mergeImportedPrompts, mergeVocabulary, createPromptDockArchive }, process.env.PROMPT_DOCK_TEST_BACKUP, app.getPath("userData")) : null;
     const stableFocusableWindow = mainWindow.isFocusable();
     const smokeState = readState();
     const smokeBackupDirectory = path.join(app.getPath("userData"), "backup-smoke");
@@ -1067,10 +1084,10 @@ function createWindow() {
       [editorFormElement, editorDialogElement].forEach((element) => { element.scrollTop = element.scrollHeight; });
       const editorWasScrolled = [editorFormElement, editorDialogElement].some((element) => element.scrollTop > 0);
       document.querySelector("#editorDialog").close();
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true }));
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: !IS_MAC, metaKey: IS_MAC, bubbles: true }));
       await new Promise((resolve) => setTimeout(resolve, 80));
       const ctrlKFocusesSearch = document.activeElement === document.querySelector("#searchInput");
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "n", ctrlKey: true, bubbles: true }));
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "n", ctrlKey: !IS_MAC, metaKey: IS_MAC, bubbles: true }));
       await new Promise((resolve) => setTimeout(resolve, 80));
       const newPromptShortcutWorks = document.querySelector("#editorDialog").open
         && document.querySelector("#titleField").value === "";
@@ -1120,10 +1137,10 @@ function createWindow() {
       await new Promise((resolve) => setTimeout(resolve, 120));
       const settingsOpened = settings.open;
       document.querySelector("#recordNewPromptShortcutBtn").click();
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "n", ctrlKey: true, shiftKey: true, bubbles: true }));
-      const newPromptShortcutRecorderWorks = document.querySelector("#newPromptShortcutField").value === "Control+Shift+N";
-      document.querySelector("#newPromptShortcutField").value = "Control+N";
-      const newPromptShortcutConflictCheck = Boolean(validateNewPromptShortcut("Control+K"))
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "n", ctrlKey: !IS_MAC, metaKey: IS_MAC, shiftKey: true, bubbles: true }));
+      const newPromptShortcutRecorderWorks = document.querySelector("#newPromptShortcutField").value === (IS_MAC ? "Command+Shift+N" : "Control+Shift+N");
+      document.querySelector("#newPromptShortcutField").value = DEFAULT_NEW_SHORTCUT;
+      const newPromptShortcutConflictCheck = Boolean(validateNewPromptShortcut(IS_MAC ? "Command+K" : "Control+K"))
         && Boolean(validateNewPromptShortcut(state.settings.shortcut, state.settings.shortcut));
       document.querySelector("#authorBtn").click();
       await new Promise((resolve) => setTimeout(resolve, 120));
@@ -1235,11 +1252,11 @@ function createWindow() {
       state.vocabulary.entries.push(vocabularyWord, vocabularyWordTwo, vocabularyDeleteProbe);
       await persist();
       setAppMode("vocabulary");
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true }));
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: !IS_MAC, metaKey: IS_MAC, bubbles: true }));
       await new Promise((resolve) => setTimeout(resolve, 80));
       const vocabularyCtrlKFocusesSearch = document.activeElement === document.querySelector("#vocabularySearchInput");
       const vocabularySearchUiWorks = document.querySelector("#vocabularySearchInput").placeholder === "搜索关键词"
-        && document.querySelector("#vocabularyShortcutBadge").textContent === "Ctrl K";
+        && document.querySelector("#vocabularyShortcutBadge").textContent === (IS_MAC ? "⌘ K" : "Ctrl K");
       const vocabularyDunhaoSplitWorks = "电影感、低机位、柔和光线".split(vocabularySplitter("smart")).length === 3
         && "电影感、低机位".split(vocabularySplitter("dunhao")).length === 2
         && Boolean(document.querySelector('#vocabularySplitMode option[value="dunhao"]'));
@@ -1596,13 +1613,43 @@ function createWindow() {
     await mainWindow.webContents.executeJavaScript("document.querySelector('#minimizeBtn').click()");
     await new Promise((resolve) => setTimeout(resolve, 80));
     result.minimizeHidesToTray = !mainWindow.isVisible();
+    result.windowsBackupVerification = backupVerification;
+    revealLauncher();
+    mainWindow.close();
+    result.closeHidesWindow = !mainWindow.isVisible() && !mainWindow.isDestroyed();
+    app.emit("activate");
+    result.dockActivationRestoresWindow = mainWindow.isVisible();
+    mainWindow.setSize(980, 650);
+    saveWindowSize();
+    const savedNormal = readState().settings.normalWindowBounds;
+    result.normalWindowSizePersisted = savedNormal.width === 980 && savedNormal.height === 650;
+    mainWindow.hide();
+    const secondLaunch = new Promise(resolve => {
+      const timeout = setTimeout(() => resolve(false), 5000);
+      app.once("second-instance", () => { clearTimeout(timeout); resolve(true); });
+    });
+    const duplicate = spawn(process.execPath, [__dirname], { env: process.env, stdio: "ignore" });
+    const duplicateExit = new Promise(resolve => duplicate.once("exit", code => resolve(code)));
+    result.secondInstanceRevealsExisting = await secondLaunch && mainWindow.isVisible();
+    result.secondInstanceExitsCleanly = await duplicateExit === 0;
+    const firstShortcut = IS_MAC ? "Command+Alt+F9" : "Control+Alt+F9";
+    const occupiedShortcut = IS_MAC ? "Command+Alt+F10" : "Control+Alt+F10";
+    const registered = registerShortcut(firstShortcut);
+    globalShortcut.register(occupiedShortcut, () => {});
+    const conflict = registerShortcut(occupiedShortcut);
+    result.shortcutConflictKeepsPrevious = registered.ok && !conflict.ok && activeShortcut === firstShortcut && globalShortcut.isRegistered(firstShortcut);
+    result.invalidShortcutDoesNotThrow = !registerShortcut("Not+A+Real+Key").ok;
+    globalShortcut.unregister(occupiedShortcut);
+    const failedChecks = Object.entries(result).filter(([, value]) => value === false).map(([key]) => key);
     mainWindow.setOpacity(1);
     fs.writeFileSync(path.join(app.getPath("userData"), "smoke-result.json"), JSON.stringify(result, null, 2));
     console.log(`SMOKE_OK:${JSON.stringify(result)}`);
     app.isQuitting = true;
+    process.exitCode = failedChecks.length ? 2 : 0;
     app.quit();
   });
   mainWindow.on("close", (event) => {
+    saveWindowSize();
     if (!app.isQuitting) {
       event.preventDefault();
       mainWindow.hide();
@@ -1615,14 +1662,68 @@ function createTray() {
   tray = new Tray(icon);
   tray.setToolTip("Prompt Dock");
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: "打开 Prompt Dock", click: showLauncher },
+    { label: "打开 Prompt Dock", click: revealLauncher },
     { type: "separator" },
     { label: "退出", click: () => { app.isQuitting = true; app.quit(); } }
   ]));
   tray.on("double-click", showLauncher);
 }
 
+function saveWindowSize() {
+  clearTimeout(windowSaveTimer);
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const { width, height } = mainWindow.getBounds();
+  const state = readState();
+  if (windowMode) state.settings.compactWindowSize = { width, height };
+  else state.settings.normalWindowBounds = { width, height };
+  writeState(state);
+}
+function scheduleWindowSave() {
+  clearTimeout(windowSaveTimer);
+  windowSaveTimer = setTimeout(saveWindowSize, 250);
+}
+function startMacHelper() {
+  if (!IS_MAC) return;
+  const executable = app.isPackaged ? path.join(process.resourcesPath, "PromptDock.MacHelper")
+    : path.join(__dirname, "build", "PromptDock.MacHelper");
+  macHelper = spawn(executable, [String(process.pid)], { stdio: ["pipe", "pipe", "ignore"] });
+  let buffer = "";
+  macHelper.stdout.on("data", chunk => {
+    buffer += chunk.toString();
+    let end;
+    while ((end = buffer.indexOf("\n")) >= 0) {
+      const result = buffer.slice(0, end).trim();
+      buffer = buffer.slice(end + 1);
+      if (result.startsWith("TARGET:")) { if (testProfile) console.log(result); continue; }
+      macReply?.(result);
+    }
+  });
+  macHelper.on("error", () => { macReply?.("FAILED"); macHelper = null; });
+  macHelper.on("exit", () => { macReply?.("FAILED"); macHelper = null; });
+  macHelper.stdin.on("error", () => macReply?.("FAILED"));
+}
 async function simulatePasteShortcut() {
+  if (IS_MAC) {
+    if (!macHelper) return { ok: false, message: "内容已复制；Mac 粘贴助手不可用，请使用 ⌘V。" };
+    const result = await new Promise(resolve => {
+      const timer = setTimeout(() => { macReply = null; resolve("FAILED"); }, 2500);
+      macReply = value => { clearTimeout(timer); macReply = null; resolve(value); };
+      macHelper.stdin.write("paste\n");
+    });
+    if (testProfile) console.log("MAC_PASTE_RESULT:", result);
+    if (result === "PERMISSION" && !macPermissionNoticeShown && !process.env.PROMPT_DOCK_NATIVE_TEST) {
+      macPermissionNoticeShown = true;
+      const choice = await dialog.showMessageBox(mainWindow, {
+        type: "info", title: "需要辅助功能权限", message: "内容已复制；直接粘贴需要你的授权。",
+        detail: "在系统设置 → 隐私与安全性 → 辅助功能中启用 Prompt Dock。开发运行时可能显示 Electron 或 PromptDock.MacHelper。授权后先点击外部输入框，再回来点击 Prompt；也可以直接手动 ⌘V。",
+        buttons: ["打开系统设置", "稍后，手动粘贴"], cancelId: 1
+      });
+      if (choice.response === 0) await shell.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility");
+    }
+    return { ok: result === "OK", message: result === "OK" ? "" : result === "PERMISSION"
+      ? "内容已复制。请在系统设置 → 隐私与安全性 → 辅助功能中允许 Prompt Dock（开发时为 Electron／MacHelper），再重试；也可手动 ⌘V。"
+      : result === "NO_TARGET" ? "内容已复制，请先点击外部应用的输入框，再点击 Prompt。" : "内容已复制；无法自动粘贴，请使用 ⌘V。" };
+  }
   if (process.platform !== "win32") {
     return { ok: false, message: "当前系统暂不支持模拟粘贴" };
   }
@@ -1637,6 +1738,9 @@ async function simulatePasteShortcut() {
 
 function setCompactMode(enabled, requestedSize = null) {
   const next = Boolean(enabled);
+  saveWindowSize();
+  if (next && !windowMode) normalWindowBounds = mainWindow.getBounds();
+  windowMode = next;
   if (next) {
     if (!normalWindowBounds) normalWindowBounds = mainWindow.getBounds();
     const current = mainWindow.getBounds();
@@ -1678,7 +1782,31 @@ app.whenReady().then(() => {
     if (!filePath) return new Response("Not found", { status: 404 });
     return net.fetch(pathToFileURL(filePath).toString());
   });
+  startMacHelper();
+  if (IS_MAC) Menu.setApplicationMenu(Menu.buildFromTemplate([
+    { label: app.name, submenu: [{ role: "about" }, { type: "separator" }, { role: "hide" }, { role: "hideOthers" }, { role: "unhide" }, { type: "separator" }, { role: "quit" }] },
+    { label: "编辑", submenu: [{ role: "undo" }, { role: "redo" }, { type: "separator" }, { role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" }] },
+    { label: "窗口", submenu: [{ label: "打开 Prompt Dock", click: revealLauncher }] }
+  ]));
   createWindow();
+  if (process.env.PROMPT_DOCK_NATIVE_TEST && testProfile) {
+    mainWindow.webContents.once("did-finish-load", async () => {
+      const output = path.join(testProfile, "native-pasted.txt");
+      const target = spawn(process.env.PROMPT_DOCK_NATIVE_TEST, [output]);
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      revealLauncher();
+      await new Promise(resolve => setTimeout(resolve, 300));
+      const expected = "Prompt Dock 原生粘贴测试 — isolated 123";
+      clipboard.writeText(expected);
+      const paste = await simulatePasteShortcut();
+      await new Promise(resolve => setTimeout(resolve, 500));
+      const passed = fs.existsSync(output) && fs.readFileSync(output, "utf8") === expected;
+      fs.writeFileSync(path.join(testProfile, "native-result.json"), JSON.stringify({ paste, passed }));
+      console.log("NATIVE_TEST:", { paste, passed });
+      target.kill();
+      app.quit();
+    });
+  }
   if (SMOKE_TEST) return;
   createTray();
   const state = readState();
@@ -1696,7 +1824,11 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", (event) => event.preventDefault());
+app.on("activate", () => { if (mainWindow) revealLauncher(); });
+app.on("before-quit", () => { app.isQuitting = true; saveWindowSize(); });
 app.on("will-quit", () => {
+  clearTimeout(windowSaveTimer);
+  macHelper?.kill();
   globalShortcut.unregisterAll();
   storage?.close();
 });
@@ -1727,6 +1859,7 @@ ipcMain.handle("state:save", (_, nextState) => {
   const previousState = readState();
   const libraryChanged = libraryFingerprint(previousState.prompts) !== libraryFingerprint(nextState.prompts)
     || vocabularyFingerprint(previousState.vocabulary) !== vocabularyFingerprint(nextState.vocabulary);
+  nextState.settings.normalWindowBounds = previousState.settings.normalWindowBounds;
   let savedState = writeState(nextState);
   const lastBackupDay = savedState.settings.lastBackupAt
     ? localDateStamp(new Date(savedState.settings.lastBackupAt))
@@ -1769,8 +1902,10 @@ ipcMain.handle("clipboard:paste", (_, text) => {
   const operation = async () => {
     clipboard.writeText(requestedText);
     if (SMOKE_TEST) return { ok: true, keptVisible: true };
-    mainWindow.blur();
-    await new Promise((resolve) => setTimeout(resolve, 70));
+    if (!IS_MAC) {
+      mainWindow.blur();
+      await new Promise((resolve) => setTimeout(resolve, 70));
+    }
     return simulatePasteShortcut();
   };
   pasteQueue = pasteQueue.then(operation, operation);
