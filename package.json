@@ -1,0 +1,60 @@
+{
+  "name": "prompt-dock",
+  "version": "0.10.13",
+  "description": "本地优先的 Prompt 桌面启动器",
+  "main": "main.js",
+  "author": "Codex",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable",
+    "dist:installer": "electron-builder --win nsis"
+  },
+  "dependencies": {
+    "adm-zip": "^0.6.0"
+  },
+  "devDependencies": {
+    "electron": "^37.2.3",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.codex.promptdock",
+    "productName": "Prompt Dock",
+    "artifactName": "Prompt-Dock-${version}-portable.${ext}",
+    "files": [
+      "main.js",
+      "storage.js",
+      "preload.js",
+      "renderer.js",
+      "index.html",
+      "styles.css",
+      "assets/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "assets/PromptDock.WinHelper.exe"
+    ],
+    "win": {
+      "icon": "assets/app.ico",
+      "target": [
+        "portable"
+      ]
+    },
+    "nsis": {
+      "artifactName": "Prompt-Dock-${version}-Setup.${ext}",
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Prompt Dock",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "installerLanguages": [
+        "zh_CN",
+        "en_US"
+      ]
+    }
+  }
+}

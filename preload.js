@@ -1,0 +1,32 @@
+const { contextBridge, ipcRenderer } = require("electron");
+
+contextBridge.exposeInMainWorld("promptDock", {
+  getState: () => ipcRenderer.invoke("state:get"),
+  getAppVersion: () => ipcRenderer.invoke("app:version"),
+  getMigrationInfo: () => ipcRenderer.invoke("storage:migration-info"),
+  getCacheStatus: () => ipcRenderer.invoke("cache:status"),
+  clearCache: () => ipcRenderer.invoke("cache:clear"),
+  saveState: (state) => ipcRenderer.invoke("state:save", state),
+  recordPromptUse: (promptId, variantId, lastUsed) => ipcRenderer.invoke("prompt:record-use", promptId, variantId, lastUsed),
+  recordVocabularyUse: (entryIds, lastUsed) => ipcRenderer.invoke("vocabulary:record-use", entryIds, lastUsed),
+  minimize: () => ipcRenderer.invoke("window:minimize"),
+  hide: () => ipcRenderer.invoke("window:hide"),
+  setAlwaysOnTop: (enabled) => ipcRenderer.invoke("window:set-always-on-top", enabled),
+  setCompactMode: (enabled, savedSize) => ipcRenderer.invoke("window:set-compact-mode", enabled, savedSize),
+  getWindowBounds: () => ipcRenderer.invoke("window:get-bounds"),
+  quit: () => ipcRenderer.invoke("window:quit"),
+  copy: (text) => ipcRenderer.invoke("clipboard:copy", text),
+  paste: (text) => ipcRenderer.invoke("clipboard:paste", text),
+  setShortcut: (shortcut) => ipcRenderer.invoke("shortcut:set", shortcut),
+  chooseImages: () => ipcRenderer.invoke("image:choose"),
+  importImageBuffers: (buffers) => ipcRenderer.invoke("image:import-buffers", buffers),
+  pasteImage: () => ipcRenderer.invoke("image:paste"),
+  copyImage: (source) => ipcRenderer.invoke("image:copy", source),
+  saveImage: (source, promptTitle, imageIndex) => ipcRenderer.invoke("image:save", source, promptTitle, imageIndex),
+  chooseBackupDirectory: () => ipcRenderer.invoke("backup:choose-directory"),
+  runBackupNow: (directory) => ipcRenderer.invoke("backup:run-now", directory),
+  getBackupStatus: (directory) => ipcRenderer.invoke("backup:status", directory),
+  exportData: () => ipcRenderer.invoke("data:export"),
+  importData: () => ipcRenderer.invoke("data:import"),
+  onFocusSearch: (callback) => ipcRenderer.on("launcher:focus-search", callback)
+});
