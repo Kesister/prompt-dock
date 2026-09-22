@@ -1,0 +1,23 @@
+# Track only reviewed source and shipped assets. Local libraries/builds stay local.
+/*
+!/.gitignore
+!/.gitattributes
+!/package.json
+!/package-lock.json
+!/main.js
+!/preload.js
+!/renderer.js
+!/storage.js
+!/index.html
+!/styles.css
+!/README.md
+!/MAC-HANDOFF.md
+!/assets/
+/assets/*
+!/assets/app.ico
+!/assets/logo.png
+!/assets/author-avatar.jpg
+!/assets/author-wechat-qr.jpg
+!/assets/PromptDock.WinHelper.cs
+!/assets/PromptDock.WinHelper.exe
+
