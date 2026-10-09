@@ -68,7 +68,7 @@
 
 可选的 [promptdock-notion-sync](skills/promptdock-notion-sync/SKILL.md) 会把用户提供的 `.promptdock` 备份单向增量同步到其自己的 Notion 数据库；按原始 ID 去重，保护冲突，不自动删除页面。它不是软件内置云同步，也不会定时执行。
 
-- [下载脱敏分享版 ZIP](skills/promptdock-notion-sync-share.zip)
+- [下载脱敏分享版 ZIP](https://github.com/Kesister/prompt-dock/releases/download/skill-notion-sync-v1.0.0/promptdock-notion-sync-share.zip)
 - [查看字段映射与同步规则](skills/promptdock-notion-sync/references/workflow.md)
 - 分享版没有预设数据库、个人资料或账户凭据，不随软件安装包自动安装。
 

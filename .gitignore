@@ -21,10 +21,9 @@
 !/assets/PromptDock.WinHelper.cs
 !/assets/PromptDock.WinHelper.exe
 
-# Only the reviewed shareable skill and package may enter version control.
+# Only the reviewed shareable skill source may enter version control; ZIP packages live in Releases.
 !/skills/
 /skills/*
-!/skills/promptdock-notion-sync-share.zip
 !/skills/promptdock-notion-sync/
 /skills/promptdock-notion-sync/*
 !/skills/promptdock-notion-sync/SKILL.md
