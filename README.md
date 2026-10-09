@@ -64,6 +64,30 @@
 - 新建或编辑 Prompt 时始终从表单顶部开始，不会继承上一次关闭前的滚动位置
 - 设置底部提供“关于与作者”页面，展示作者介绍、动态版本信息和可放大的微信二维码
 
+## 配套 Codex Skill：同步到 Notion
+
+可选的 [promptdock-notion-sync](skills/promptdock-notion-sync/SKILL.md) 会把用户提供的 `.promptdock` 备份单向增量同步到其自己的 Notion 数据库；按原始 ID 去重，保护冲突，不自动删除页面。它不是软件内置云同步，也不会定时执行。
+
+- [下载脱敏分享版 ZIP](skills/promptdock-notion-sync-share.zip)
+- [查看字段映射与同步规则](skills/promptdock-notion-sync/references/workflow.md)
+- 分享版没有预设数据库、个人资料或账户凭据，不随软件安装包自动安装。
+
+首次使用：
+
+1. 将 ZIP 交给 Codex，明确要求安装 `promptdock-notion-sync`，但先不要同步。
+2. 安装并连接自己的 Notion 插件／连接器，确保目标数据库有读写权限；不必额外安装通用 Notion 技能。
+3. 新开聊天，提供自己的 `.promptdock` 文件和目标数据库链接；当前分享版需先指定已有数据库，会检查并补齐所需字段，不默认创建数据库。
+4. 辅助脚本需要 Python 3.10+，可让 Codex 先检查运行环境。
+
+先用以下请求测试：
+
+```text
+使用 $promptdock-notion-sync，把我提供的 .promptdock 文件同步到这个 Notion 数据库：[填写自己的数据库链接]。
+先检查连接和运行环境，只导入 3 条测试。不要删除已有页面，遇到冲突先告诉我。
+```
+
+核对测试结果后再要求全部同步。之后提供新备份即可增量更新；保留本地同步状态，换电脑时私下迁移，不随技能或仓库分享。个人备份不要上传到公开介绍页或这个源码仓库。
+
 ## 开发运行
 
 ```powershell

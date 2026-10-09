@@ -20,3 +20,21 @@
 !/assets/author-wechat-qr.jpg
 !/assets/PromptDock.WinHelper.cs
 !/assets/PromptDock.WinHelper.exe
+
+# Only the reviewed shareable skill and package may enter version control.
+!/skills/
+/skills/*
+!/skills/promptdock-notion-sync-share.zip
+!/skills/promptdock-notion-sync/
+/skills/promptdock-notion-sync/*
+!/skills/promptdock-notion-sync/SKILL.md
+!/skills/promptdock-notion-sync/agents/
+/skills/promptdock-notion-sync/agents/*
+!/skills/promptdock-notion-sync/agents/openai.yaml
+!/skills/promptdock-notion-sync/references/
+/skills/promptdock-notion-sync/references/*
+!/skills/promptdock-notion-sync/references/workflow.md
+!/skills/promptdock-notion-sync/scripts/
+/skills/promptdock-notion-sync/scripts/*
+!/skills/promptdock-notion-sync/scripts/sync.py
+!/skills/promptdock-notion-sync/scripts/test_sync.py
