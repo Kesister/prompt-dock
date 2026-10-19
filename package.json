@@ -1,13 +1,17 @@
 {
   "name": "prompt-dock",
-  "version": "0.10.13",
+  "version": "0.11.0",
   "description": "本地优先的 Prompt 桌面启动器",
   "main": "main.js",
   "author": "Codex",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win portable",
+    "build:slash": "node scripts/build-slash-helper.js",
+    "build:focus": "node scripts/build-focus-grant.js",
+    "test:slash": "node --test tests/slash-core.test.js",
+    "test:preview": "node scripts/test-slash-preview.js",
+    "dist": "npm run build:slash && npm run build:focus && electron-builder --win portable",
     "dist:installer": "electron-builder --win nsis"
   },
   "dependencies": {
@@ -23,16 +27,23 @@
     "artifactName": "Prompt-Dock-${version}-portable.${ext}",
     "files": [
       "main.js",
+      "author-links.js",
       "storage.js",
       "preload.js",
       "renderer.js",
       "index.html",
       "styles.css",
+      "slash-*.js",
+      "slash.html",
+      "slash.css",
       "assets/**/*",
+      "!assets/author-wechat-qr.jpg",
       "package.json"
     ],
     "asarUnpack": [
-      "assets/PromptDock.WinHelper.exe"
+      "assets/PromptDock.WinHelper.exe",
+      "assets/PromptDock.SlashHelper.exe",
+      "assets/PromptDock.FocusGrant.exe"
     ],
     "win": {
       "icon": "assets/app.ico",

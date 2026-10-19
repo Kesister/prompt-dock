@@ -1,0 +1,12 @@
+const { spawn } = require('node:child_process');
+const path = require('node:path');
+const root = path.resolve(__dirname, '..');
+const exe = process.argv[2] || path.join(root, 'node_modules', 'electron', 'dist', 'electron.exe');
+const env = { ...process.env, PROMPT_DOCK_SMOKE_TEST: '1' }; delete env.ELECTRON_RUN_AS_NODE;
+const child = spawn(exe, process.argv[2] ? [] : ['.'], { cwd: root, env, windowsHide: true });
+let passed = false;
+child.stdout.on('data', chunk => { const text=String(chunk); process.stdout.write(text); if(text.includes('SMOKE_OK:'))passed=true; });
+child.stderr.on('data', chunk => process.stderr.write(chunk));
+child.on('error', error => { console.error(error); process.exitCode=1; });
+const timer=setTimeout(()=>{console.error('Smoke test timeout');child.kill();process.exitCode=1;},60000);
+child.on('exit',code=>{clearTimeout(timer); if(code!==0||!passed){console.error(`Smoke test did not complete: ${code}`);process.exitCode=1;} });

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, Tray, nativeImage, net, protocol, screen, session } = require("electron");
+const { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, Tray, nativeImage, net, protocol, screen, session, shell } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const { pathToFileURL } = require("url");
@@ -6,6 +6,11 @@ const { spawn } = require("child_process");
 const { createHash, randomUUID } = require("crypto");
 const AdmZip = require("adm-zip");
 const { IMAGE_SCHEME, PromptStorage, decodeDataImage, parseAssetUrl } = require("./storage");
+const { SlashController } = require("./slash-controller");
+const slashCore = require("./slash-core");
+const { resolveAuthorLink, authorInfo } = require("./author-links");
+const os = require("os");
+const smokeAuthorLinks = [];
 
 let mainWindow;
 let tray;
@@ -13,6 +18,7 @@ let activeShortcut = "";
 let normalWindowBounds = null;
 let pasteQueue = Promise.resolve();
 let storage;
+let slashController;
 const DEFAULT_SHORTCUT = "Control+Alt+P";
 const MAX_PROMPT_IMAGES = 6;
 const MAX_SOURCE_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -20,7 +26,7 @@ const MAX_IMAGE_EDGE = 1600;
 const SMOKE_TEST = process.env.PROMPT_DOCK_SMOKE_TEST === "1";
 if (SMOKE_TEST) {
   app.disableHardwareAcceleration();
-  app.setPath("userData", path.join(app.getPath("temp"), `prompt-dock-smoke-test-${app.getVersion()}`));
+  app.setPath("userData", path.join(app.getPath("temp"), `prompt-dock-smoke-test-${app.getVersion()}-${process.pid}`));
   process.on("unhandledRejection", (error) => {
     console.error(`SMOKE_FAIL:${error?.stack || error}`);
     app.exit(2);
@@ -61,6 +67,7 @@ function initialState() {
     settings: {
       shortcut: DEFAULT_SHORTCUT,
       newPromptShortcut: "Control+N",
+      slash: slashCore.settings(),
       directPaste: true,
       launchAtLogin: false,
       alwaysOnTop: false,
@@ -123,7 +130,9 @@ function normalizeStoredPrompt(prompt) {
 }
 
 function writeState(state) {
-  return getStorage().writeState(state);
+  const result = getStorage().writeState(state);
+  slashController?.invalidate();
+  return result;
 }
 
 function localDateStamp(date = new Date()) {
@@ -231,6 +240,7 @@ function promptContentHash(prompt) {
 function promptFullHash(prompt) {
   const normalized = {
     title: String(prompt.title || "").trim(),
+    alias: String(prompt.alias || "").trim(),
     defaultVariantTitle: String(prompt.defaultVariantTitle || "默认版本").trim(),
     content: String(prompt.content || "").trim(),
     usageNote: String(prompt.usageNote || "").trim(),
@@ -386,6 +396,7 @@ function sanitizeImportedPrompt(prompt) {
   return normalizeStoredPrompt({
     id: typeof prompt.id === "string" && prompt.id ? prompt.id : randomUUID(),
     title: String(prompt.title || "未命名 Prompt"),
+    alias: String(prompt.alias || "").trim().slice(0, 32),
     defaultVariantTitle: String(prompt.defaultVariantTitle || "默认版本"),
     content: String(prompt.content || ""),
     usageNote: String(prompt.usageNote || ""),
@@ -488,6 +499,7 @@ function mergeImportedPrompts(localPrompts, incomingPrompts) {
       local.favorite = Boolean(local.favorite || incoming.favorite);
       if (!local.defaultVariantTitle && incoming.defaultVariantTitle) local.defaultVariantTitle = incoming.defaultVariantTitle;
       if (!local.usageNote && incoming.usageNote) local.usageNote = incoming.usageNote;
+      if (!local.alias && incoming.alias) local.alias = incoming.alias;
       if (!(local.images || []).length && (incoming.images || []).length) local.images = [...incoming.images];
       summary.deduplicated += 1;
       continue;
@@ -1129,45 +1141,45 @@ function createWindow() {
       await new Promise((resolve) => setTimeout(resolve, 120));
       const authorDialog = document.querySelector("#authorDialog");
       const authorAvatar = document.querySelector("#authorAvatar");
-      const authorQrImage = document.querySelector("#authorQrImage");
       if (!authorAvatar.complete) await new Promise((resolve) => authorAvatar.addEventListener("load", resolve, { once: true }));
-      if (!authorQrImage.complete) await new Promise((resolve) => authorQrImage.addEventListener("load", resolve, { once: true }));
       const authorPageWorks = authorDialog.open
         && authorAvatar.naturalWidth === 960
-        && authorQrImage.naturalWidth === 950
         && document.querySelector("#authorAppVersion").textContent === "v${app.getVersion()}";
-      document.querySelector("#authorQrButton").click();
-      await new Promise((resolve) => requestAnimationFrame(resolve));
-      const authorQrDialog = document.querySelector("#authorQrDialog");
-      const authorQrForm = authorQrDialog.querySelector("form");
-      const authorQrLargeImage = authorQrDialog.querySelector("img");
-      const authorQrFormRect = authorQrForm.getBoundingClientRect();
-      const authorQrImageRect = authorQrLargeImage.getBoundingClientRect();
-      const authorQrEnlarges = authorQrDialog.open && authorQrLargeImage.naturalHeight === 1295;
-      const authorQrFullyVisible = authorQrImageRect.left >= authorQrFormRect.left - 1
-        && authorQrImageRect.top >= authorQrFormRect.top - 1
-        && authorQrImageRect.right <= authorQrFormRect.right + 1
-        && authorQrImageRect.bottom <= authorQrFormRect.bottom + 1;
-      const authorQrHasNoScroll = authorQrDialog.scrollHeight <= authorQrDialog.clientHeight + 1
-        && authorQrForm.scrollHeight <= authorQrForm.clientHeight + 1
-        && getComputedStyle(authorQrDialog).overflowY === "hidden"
-        && getComputedStyle(authorQrForm).overflowY === "hidden";
-      const authorQrKeepsAspect = getComputedStyle(authorQrLargeImage).objectFit === "contain"
-        && Math.abs((authorQrLargeImage.naturalWidth / authorQrLargeImage.naturalHeight) - (950 / 1295)) < 0.01;
-      const authorQrCloseButton = document.querySelector(".author-qr-close");
-      const authorQrCloseRect = authorQrCloseButton.getBoundingClientRect();
-      const authorQrCloseHitTarget = document.elementFromPoint(authorQrCloseRect.left + 3, authorQrCloseRect.top + 3);
-      authorQrCloseButton.dispatchEvent(new PointerEvent("pointerdown", { button: 0, bubbles: true, cancelable: true }));
-      const authorQrCloseHitAreaWorks = authorQrCloseRect.width >= 44
-        && authorQrCloseRect.height >= 44
-        && authorQrCloseHitTarget?.closest(".author-qr-close") === authorQrCloseButton
-        && !authorQrDialog.open;
-      if (authorQrDialog.open) authorQrDialog.close();
+      const authorQrRemoved = !document.querySelector('#authorQrDialog, #authorQrButton, img[src*="author-wechat-qr"]');
+      const authorCards = [...document.querySelectorAll('[data-author-link]')];
+      const authorCardHitAreas = authorCards.length === 2 && authorCards.every(button => {
+        const r = button.getBoundingClientRect();
+        const icon = button.querySelector('.author-platform-icon').getBoundingClientRect();
+        return r.width > 180 && r.height > 100
+          && document.elementFromPoint(r.left + 5, r.top + 5)?.closest('[data-author-link]') === button
+          && document.elementFromPoint(icon.left + icon.width / 2, icon.top + icon.height / 2)?.closest('[data-author-link]') === button;
+      });
+      const authorPlatformIcons = authorCards.every(button => button.querySelector('.author-platform-icon use')?.getAttribute('href').startsWith('#icon-'));
+      const authorTitle = document.querySelector('.author-title'), authorTitleStyle = getComputedStyle(authorTitle);
+      const authorTitleBadgeDiagnostic = { text: authorTitle.textContent, borderWidth: authorTitleStyle.borderTopWidth,
+        borderStyle: authorTitleStyle.borderTopStyle, paddingLeft: authorTitleStyle.paddingLeft,
+        radius: authorTitleStyle.borderRadius, fontSize: authorTitleStyle.fontSize };
+      const authorTitleBadgeRestored = authorTitle.textContent === 'Prompt Dock 作者'
+        && parseFloat(authorTitleStyle.borderTopWidth) > 0 && parseFloat(authorTitleStyle.borderTopWidth) <= 1.5
+        && authorTitleStyle.borderTopStyle === 'solid'
+        && authorTitleStyle.paddingLeft === '8px' && authorTitleStyle.borderRadius === '6px'
+        && parseFloat(authorTitleStyle.fontSize) <= 12;
+      const notionSymbol = document.querySelector('#icon-notion');
+      const authorNotionMarkIsOfficial = notionSymbol.getAttribute('viewBox') === '0 0 33 34'
+        && notionSymbol.querySelectorAll('path').length === 3
+        && getComputedStyle(document.querySelector('.author-feedback .author-platform-icon svg')).stroke === 'none';
+      for (const button of authorCards) { button.click(); await new Promise(resolve => setTimeout(resolve, 80)); }
+      const authorLinksRecoverAfterClick = authorCards.every(button => !button.disabled) && authorDialog.open;
+      const authorRejectsUnknownLink = !(await window.promptDock.openAuthorLink('https://example.com')).ok
+        && !(await window.promptDock.openAuthorLink('__proto__')).ok;
+      const authorClose = document.querySelector('.author-close');
+      const authorCloseRect = authorClose.getBoundingClientRect();
+      const authorCloseHitAreaWorks = authorCloseRect.width >= 44 && authorCloseRect.height >= 44
+        && document.elementFromPoint(authorCloseRect.left + 4, authorCloseRect.top + 4)?.closest('.author-close') === authorClose;
       document.querySelector('[data-close-dialog="authorDialog"]').click();
-      const authorPageReturnDiagnostic = { settingsOpen: settings.open, authorOpen: authorDialog.open, qrOpen: document.querySelector("#authorQrDialog").open };
+      const authorPageReturnDiagnostic = { settingsOpen: settings.open, authorOpen: authorDialog.open };
       const authorPageReturnsToSettings = authorPageReturnDiagnostic.settingsOpen
-        && !authorPageReturnDiagnostic.authorOpen
-        && !authorPageReturnDiagnostic.qrOpen;
+        && !authorPageReturnDiagnostic.authorOpen;
       const cacheMaintenanceAvailable = Boolean(document.querySelector("#clearCacheBtn"))
         && typeof window.promptDock.clearCache === "function";
       const cacheClearResult = await window.promptDock.clearCache();
@@ -1377,11 +1389,15 @@ function createWindow() {
         newPromptShortcutRecorderWorks,
         newPromptShortcutConflictCheck,
         authorPageWorks,
-        authorQrEnlarges,
-        authorQrFullyVisible,
-        authorQrHasNoScroll,
-        authorQrKeepsAspect,
-        authorQrCloseHitAreaWorks,
+        authorQrRemoved,
+        authorCardHitAreas,
+        authorPlatformIcons,
+        authorTitleBadgeRestored,
+        authorTitleBadgeDiagnostic,
+        authorNotionMarkIsOfficial,
+        authorLinksRecoverAfterClick,
+        authorRejectsUnknownLink,
+        authorCloseHitAreaWorks,
         authorPageReturnsToSettings,
         authorPageReturnDiagnostic,
         usageNotePreviewWorks,
@@ -1515,23 +1531,60 @@ function createWindow() {
     result.vocabularyScreenshotPath = vocabularyScreenshotPath;
     result.vocabularyBatchMoveScreenshotCaptured = fs.existsSync(vocabularyBatchMoveScreenshotPath);
     result.vocabularyBatchMoveScreenshotPath = vocabularyBatchMoveScreenshotPath;
-    await mainWindow.webContents.executeJavaScript(`(async () => {
+    const expectedAuthorInfo = await mainWindow.webContents.executeJavaScript(`(async () => {
       await openAuthorDialog();
       const images = [...document.querySelectorAll("#authorDialog img")];
       await Promise.all(images.filter((image) => !image.complete).map((image) => new Promise((resolve) => image.addEventListener("load", resolve, { once: true }))));
+      document.querySelector('#copyAuthorInfoBtn').click();
+      await new Promise(resolve => setTimeout(resolve, 150));
+      return (await window.promptDock.getAuthorInfo()).feedbackInfo;
     })()`);
+    result.authorFeedbackInfoCopied = clipboard.readText() === expectedAuthorInfo
+      && expectedAuthorInfo.startsWith(`Prompt Dock v${app.getVersion()}\n系统：`)
+      && expectedAuthorInfo.split('\n').length === 2;
+    result.authorLinksRouteSafely = smokeAuthorLinks.length === 2
+      && smokeAuthorLinks[0].id === 'github' && smokeAuthorLinks[0].url === 'https://github.com/Kesister'
+      && smokeAuthorLinks[1].id === 'feedback' && smokeAuthorLinks[1].url === resolveAuthorLink('feedback');
+    await mainWindow.webContents.executeJavaScript("document.querySelector('#toast').classList.remove('show')");
     await new Promise((resolve) => setTimeout(resolve, 100));
     const authorScreenshotPath = path.join(app.getPath("userData"), "author-page-smoke.png");
     fs.writeFileSync(authorScreenshotPath, (await mainWindow.webContents.capturePage()).toPNG());
-    await mainWindow.webContents.executeJavaScript("document.querySelector('#authorQrButton').click();");
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    const authorQrScreenshotPath = path.join(app.getPath("userData"), "author-qr-smoke.png");
-    fs.writeFileSync(authorQrScreenshotPath, (await mainWindow.webContents.capturePage()).toPNG());
-    await mainWindow.webContents.executeJavaScript("document.querySelector('#authorQrDialog').close(); document.querySelector('#authorDialog').close();");
+    const authorOriginalBounds = mainWindow.getBounds(), authorOriginalMinimum = mainWindow.getMinimumSize();
+    mainWindow.setMinimumSize(360, 360); mainWindow.setSize(420, 500);
+    await new Promise(resolve => setTimeout(resolve, 150));
+    result.authorSmallWindowDiagnostic = await mainWindow.webContents.executeJavaScript(`(async () => {
+      const content = document.querySelector('#authorContent'), form = document.querySelector('#authorForm');
+      const footer = document.querySelector('.author-footer'), close = document.querySelector('.author-close');
+      const before = footer.getBoundingClientRect().top;
+      content.scrollTop = content.scrollHeight;
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      const footerRect = footer.getBoundingClientRect(), closeRect = close.getBoundingClientRect();
+      const diagnostics = { scrollTop: content.scrollTop, scrollHeight: content.scrollHeight, clientHeight: content.clientHeight,
+        formWidth: form.clientWidth, formScrollWidth: form.scrollWidth, footerBefore: before, footerAfter: footerRect.top,
+        footerBottom: footerRect.bottom, viewportHeight: innerHeight, closeTop: closeRect.top, closeBottom: closeRect.bottom,
+        contentTop: content.getBoundingClientRect().top, open: document.querySelector('#authorDialog').open };
+      document.querySelector('#authorDialog').close();
+      await new Promise(resolve => setTimeout(resolve, 80));
+      await openAuthorDialog();
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      diagnostics.reopenedAtTop = content.scrollTop === 0 && document.querySelector('#authorDialog').open;
+      return diagnostics;
+    })()`);
+    const authorSmall = result.authorSmallWindowDiagnostic;
+    result.authorSmallWindowWorks = authorSmall.open && authorSmall.scrollTop > 0
+      && authorSmall.formScrollWidth <= authorSmall.formWidth + 1
+      && authorSmall.footerBefore === authorSmall.footerAfter && authorSmall.footerBottom <= authorSmall.viewportHeight
+      && authorSmall.closeTop >= 0 && authorSmall.closeBottom < authorSmall.contentTop + 1 && authorSmall.reopenedAtTop;
+    const authorCompactScreenshotPath = path.join(app.getPath("userData"), "author-compact-smoke.png");
+    await new Promise(resolve => setTimeout(resolve, 220));
+    fs.writeFileSync(authorCompactScreenshotPath, (await mainWindow.webContents.capturePage()).toPNG());
+    await mainWindow.webContents.executeJavaScript("document.querySelector('#authorDialog').close()");
+    mainWindow.setMinimumSize(...authorOriginalMinimum); mainWindow.setBounds(authorOriginalBounds);
+    await new Promise(resolve => setTimeout(resolve, 100));
     result.authorScreenshotCaptured = fs.existsSync(authorScreenshotPath);
     result.authorScreenshotPath = authorScreenshotPath;
-    result.authorQrScreenshotCaptured = fs.existsSync(authorQrScreenshotPath);
-    result.authorQrScreenshotPath = authorQrScreenshotPath;
+    result.authorCompactScreenshotCaptured = fs.existsSync(authorCompactScreenshotPath);
+    result.authorCompactScreenshotPath = authorCompactScreenshotPath;
     await mainWindow.webContents.executeJavaScript("openLightbox(0);");
     await new Promise((resolve) => setTimeout(resolve, 120));
     const lightboxScreenshotPath = path.join(app.getPath("userData"), "lightbox-actions-smoke.png");
@@ -1597,6 +1650,60 @@ function createWindow() {
     await new Promise((resolve) => setTimeout(resolve, 80));
     result.minimizeHidesToTray = !mainWindow.isVisible();
     mainWindow.setOpacity(1);
+    result.slashDisabledByDefault = !slashController.config.enabled && !slashController.helper;
+    result.slashEditorAndSettings = await mainWindow.webContents.executeJavaScript(`(async () => {
+      document.querySelectorAll('dialog[open]').forEach(d => d.close());
+      openEditor(state.prompts[0]);
+      document.querySelector('#aliasField').value = 'smoke-alias';
+      document.querySelector('#editorForm').requestSubmit();
+      await new Promise(r => setTimeout(r, 150));
+      document.querySelector('#settingsBtn').click();
+      const valid = !document.querySelector('#slashTriggerField') && !document.querySelector('#slashScopeField')
+        && !document.querySelector('#slashAppsField') && !document.querySelector('#slashListAppsBtn')
+        && !document.querySelector('#slashEnabledField').checked;
+      document.querySelector('#slashShortcutField').focus();
+      const focus = document.activeElement.id === 'slashShortcutField';
+      document.querySelector('#settingsDialog').close();
+      return valid && focus && state.prompts.some(p => p.alias === 'smoke-alias');
+    })()`);
+    const aliasPrompt = readState().prompts.find(p => p.alias === "smoke-alias");
+    result.slashAliasRoundTrip = Boolean(aliasPrompt && sanitizeImportedPrompt(aliasPrompt).alias === "smoke-alias"
+      && promptFullHash(aliasPrompt) !== promptFullHash({ ...aliasPrompt, alias: "different" }));
+    slashController.event({ type: "query", session: -1, query: "smoke-alias", palette: false, copyOnly: true, x: 300, y: 200 });
+    result.slashInlineTriggerRemoved = !slashController.view && !slashController.window;
+    slashController.event({ type: "query", session: -1, query: "smoke-alias", palette: true, copyOnly: true, x: 300, y: 200 });
+    await new Promise(r => setTimeout(r, 550));
+    result.slashHotkeyPopupFocusable = slashController.window.isFocusable();
+    result.slashPopupRendered = await slashController.window.webContents.executeJavaScript("document.querySelectorAll('.item').length === 1 && document.querySelector('.summary').textContent.includes('smoke-alias')");
+    const slashScreenshotPath = path.join(app.getPath("userData"), "slash-popup.png");
+    fs.writeFileSync(slashScreenshotPath, (await slashController.window.webContents.capturePage()).toPNG());
+    result.slashScreenshotPath = slashScreenshotPath;
+    console.log("SMOKE_PHASE:hotkey-popup-rendered");
+    await slashController.window.webContents.executeJavaScript("document.querySelector('.item').click()");
+    await new Promise(r => setTimeout(r, 150));
+    result.slashCopyFallbackWorks = clipboard.readText() === aliasPrompt.content;
+    console.log("SMOKE_PHASE:copy-fallback-checked");
+    slashController.close();
+    // The synthetic test has no real input-field acquisition between invocations.
+    // Let the previous focused popup's Windows blur event drain before reopening.
+    await new Promise(r => setTimeout(r, 150));
+    slashController.event({ type: "query", session: -2, query: "smoke-alias", palette: true, copyOnly: true, x: 300, y: 200 });
+    await new Promise(r => setTimeout(r, 400));
+    console.log("SMOKE_PHASE:preview-reopened");
+    result.slashSelectedPreviewWorks = await slashController.window.webContents.executeJavaScript(`
+      !document.querySelector('#preview').hidden
+      && document.querySelector('#preview-title').textContent === ${JSON.stringify(aliasPrompt.title)}
+      && document.querySelector('#preview-body').textContent === ${JSON.stringify(aliasPrompt.content)}
+      && document.querySelector('#preview-note-text').textContent === ${JSON.stringify(aliasPrompt.usageNote || "")}
+    `);
+    const slashPreviewScreenshotPath = path.join(app.getPath("userData"), "slash-preview.png");
+    fs.writeFileSync(slashPreviewScreenshotPath, (await slashController.window.webContents.capturePage()).toPNG());
+    result.slashPreviewScreenshotPath = slashPreviewScreenshotPath;
+    await slashController.window.webContents.executeJavaScript("document.querySelector('#preview-toggle').click()");
+    await new Promise(r => setTimeout(r, 100));
+    result.slashPreviewToggleWorks = await slashController.window.webContents.executeJavaScript("document.querySelector('#preview').hidden && localStorage.getItem('promptDock.quickPreview') === 'false'");
+    slashController.close();
+    if (!result.slashSelectedPreviewWorks || !result.slashPreviewToggleWorks) throw new Error("Slash preview smoke test failed");
     fs.writeFileSync(path.join(app.getPath("userData"), "smoke-result.json"), JSON.stringify(result, null, 2));
     console.log(`SMOKE_OK:${JSON.stringify(result)}`);
     app.isQuitting = true;
@@ -1614,12 +1721,41 @@ function createTray() {
   const icon = nativeImage.createFromPath(path.join(__dirname, "assets", "logo.png")).resize({ width: 16, height: 16 });
   tray = new Tray(icon);
   tray.setToolTip("Prompt Dock");
+  refreshTrayMenu();
+  tray.on("double-click", showLauncher);
+}
+
+function refreshTrayMenu() {
+  if (!tray) return;
+  const status = slashController?.status();
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: "打开 Prompt Dock", click: showLauncher },
     { type: "separator" },
+    { label: "启用快捷调用（测试）", type: "checkbox", checked: Boolean(status?.enabled), click: async (item) => {
+      const state = readState();
+      const result = await saveSlashSettings({ ...state.settings.slash, enabled: item.checked });
+      if (!result.ok) dialog.showMessageBox(mainWindow, { type: "warning", message: result.message });
+      refreshTrayMenu();
+    } },
+    { label: status?.paused ? "恢复快捷调用" : "暂时暂停快捷调用", enabled: Boolean(status?.enabled), click: () => slashController?.pause() },
+    { type: "separator" },
     { label: "退出", click: () => { app.isQuitting = true; app.quit(); } }
   ]));
-  tray.on("double-click", showLauncher);
+}
+
+function slashStatusChanged() {
+  refreshTrayMenu();
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("slash:status", { ...slashController?.status(), config: readState().settings.slash || slashCore.settings() });
+}
+
+async function saveSlashSettings(raw, reserved) {
+  const current = readState();
+  const result = await slashController.configure(raw, reserved || [current.settings.shortcut, current.settings.newPromptShortcut]);
+  if (!result.ok) return result;
+  current.settings.slash = slashCore.settings(raw);
+  writeState(current);
+  slashStatusChanged();
+  return { ok: true, settings: current.settings.slash, status: slashController.status() };
 }
 
 async function simulatePasteShortcut() {
@@ -1679,6 +1815,10 @@ app.whenReady().then(() => {
     return net.fetch(pathToFileURL(filePath).toString());
   });
   createWindow();
+  slashController = new SlashController({ readState, onStatus: slashStatusChanged, recordUse: (id, variant) => {
+    const usage = getStorage().recordPromptUse(id, variant);
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("slash:used", { id, variant, ...usage });
+  } });
   if (SMOKE_TEST) return;
   createTray();
   const state = readState();
@@ -1693,16 +1833,32 @@ app.whenReady().then(() => {
       buttons: ["知道了"]
     });
   }
+  slashController.configure(state.settings.slash, [state.settings.shortcut, state.settings.newPromptShortcut]).then(result => {
+    if (!result.ok) { slashController.message = result.message; slashStatusChanged(); }
+  });
 });
 
 app.on("window-all-closed", (event) => event.preventDefault());
 app.on("will-quit", () => {
+  slashController?.dispose();
   globalShortcut.unregisterAll();
   storage?.close();
 });
 
 ipcMain.handle("state:get", () => readState());
 ipcMain.handle("app:version", () => app.getVersion());
+ipcMain.handle("app:author-info", () => authorInfo(app.getVersion(), process.platform, os.release(), process.arch));
+ipcMain.handle("app:author-link", async (event, id) => {
+  const url = resolveAuthorLink(id);
+  if (!url || event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) {
+    return { ok: false, message: "无法打开这个链接。" };
+  }
+  if (SMOKE_TEST) { smokeAuthorLinks.push({ id, url }); return { ok: true }; }
+  try { await shell.openExternal(url); return { ok: true }; }
+  catch { return { ok: false, message: "无法打开默认浏览器，请检查系统浏览器设置后重试。" }; }
+});
+ipcMain.handle("slash:status", () => ({ ...slashController?.status(), config: readState().settings.slash || slashCore.settings() }));
+ipcMain.handle("slash:settings", (_, settings, reserved) => saveSlashSettings(settings, reserved));
 ipcMain.handle("storage:migration-info", () => getStorage().getMigrationInfo());
 ipcMain.handle("cache:status", async () => ({ bytes: await session.defaultSession.getCacheSize() }));
 ipcMain.handle("cache:clear", async () => {
@@ -1725,6 +1881,8 @@ ipcMain.handle("vocabulary:record-use", (_, entryIds, lastUsed) => {
 });
 ipcMain.handle("state:save", (_, nextState) => {
   const previousState = readState();
+  // The dedicated settings API owns this field; stale editor saves must not undo a tray toggle.
+  nextState.settings.slash = previousState.settings.slash || slashCore.settings();
   const libraryChanged = libraryFingerprint(previousState.prompts) !== libraryFingerprint(nextState.prompts)
     || vocabularyFingerprint(previousState.vocabulary) !== vocabularyFingerprint(nextState.vocabulary);
   let savedState = writeState(nextState);
@@ -1777,6 +1935,8 @@ ipcMain.handle("clipboard:paste", (_, text) => {
   return pasteQueue;
 });
 ipcMain.handle("shortcut:set", (_, shortcut) => {
+  if (slashController?.activeShortcut && String(shortcut).toLowerCase() === slashController.activeShortcut.toLowerCase())
+    return { ok: false, message: "不能与快捷调用的快捷键相同" };
   const result = registerShortcut(shortcut);
   if (result.ok) {
     const state = readState();
