@@ -80,3 +80,4 @@
 !/scripts/test-mac-native.js
 
 !/scripts/test-mac-browser.js
+!/scripts/build-mac-installer.js

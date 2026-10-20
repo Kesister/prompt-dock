@@ -41,6 +41,20 @@ Intel Mac、Windows 实机、多显示器、全屏/Spaces、其他第三方输�
 
 正常 LaunchServices 启动的当前副本已在实际 Edge 地址和搜索栏完成主窗口直接粘贴，完整中文示例逐字回读一致，页面仍为 about:blank，没有提交搜索。快捷浮窗的真实系统热键链路由用户物理按键实测通过：`⌘⇧Space` 唤出、`Tab` 确认后，用户反馈「已直接填入文字」。此项依据用户反馈；主窗口直接粘贴依据原生 AX 逐字回读。不能将终端测试或系统设置中的同名开关代替实际输入回读。详见本地 `outputs/fix1/` 的修复说明和原始证据。
 
+## 完整 Mac 安装包
+
+已增加 `scripts/build-mac-installer.js`，将经过验收的 `.app` 原样封装成标准 macOS `.pkg` 安装向导。安装到固定的 `/Applications/Prompt Dock.app`，包含 Electron、原生助手和所有应用资源；安装后直接打开应用，无需试用启动器或外部 Node.js。
+
+包内只包含应用程序，使用系统原子替换方式覆盖旧应用，禁止把安装目标重定位到工作目录中的同名测试副本。安装没有 preinstall/postinstall 脚本，不清理、导入或重置用户资料。系统要求为 arm64、macOS 12+，与原生助手编译目标一致。
+
+实际解包后，所有文件内容、执行权限和符号链接均与验收过的应用逐项一致；严格签名完整性通过。系统安装器已接受目标宗卷，并已通过图形向导检查至“Macintosh HD 上的标准安装”确认页。未执行本机系统安装，未替换现有 `/Applications` 中的应用。安装包当前未做 Developer ID 签名及公证，不代表正式发行信任或线上自动更新链已完成。
+
+```sh
+node scripts/build-mac-installer.js "/absolute/Prompt Dock.app" "/absolute/output"
+```
+
+最终安装包及校验记录位于本地 `outputs/installer/`。
+
 ## 复现
 
 ```sh
