@@ -1,5 +1,6 @@
 const IS_MAC = window.promptDock.platform === "darwin";
 const DEFAULT_NEW_SHORTCUT = IS_MAC ? "Command+N" : "Control+N";
+const DEFAULT_SLASH_SHORTCUT = IS_MAC ? "Command+Shift+Space" : "Control+Alt+Space";
 let state;
 let selectedId = null;
 let currentFilter = "all";
@@ -116,6 +117,7 @@ function searchQueryTokens(value) {
 function promptSearchScore(prompt, tokens, normalizedQuery = "") {
   if (!tokens.length) return 0;
   const fields = [
+    { value: prompt.alias || "", weight: 20 },
     { value: prompt.title, weight: 12 },
     { value: (prompt.tags || []).map((tag) => `${tag} ${tagDisplayLabel(tag, " ")}`).join(" "), weight: 10 },
     { value: prompt.usageNote || "", weight: 8 },
@@ -1532,6 +1534,7 @@ function openEditor(prompt, initialTags = []) {
   pendingVariants = (prompt?.variants || []).map((variant) => ({ ...variant }));
   $("#editorHeading").textContent = prompt ? "编辑 Prompt" : "新建 Prompt";
   $("#titleField").value = prompt?.title || "";
+  $("#aliasField").value = prompt?.alias || "";
   $("#contentField").value = prompt?.content || "";
   $("#usageNoteField").value = prompt?.usageNote || "";
   $("#defaultVariantTitleField").value = prompt?.defaultVariantTitle || "默认版本";
@@ -1758,13 +1761,15 @@ async function openNewPrompt() {
 
 async function openAuthorDialog() {
   const dialog = $("#authorDialog");
-  $("#authorAppVersion").textContent = `v${await window.promptDock.getAppVersion()}`;
+  const info = await window.promptDock.getAuthorInfo();
+  $("#authorAppVersion").textContent = `v${info.version}`;
+  $$("[data-author-link]").forEach(button => { button.title = info.links[button.dataset.authorLink]; });
   dialog.scrollTop = 0;
-  $("#authorForm").scrollTop = 0;
+  $("#authorContent").scrollTop = 0;
   if (!dialog.open) dialog.showModal();
   requestAnimationFrame(() => {
     dialog.scrollTop = 0;
-    $("#authorForm").scrollTop = 0;
+    $("#authorContent").scrollTop = 0;
   });
 }
 
@@ -2052,18 +2057,21 @@ $$("#vocabularyCollectionMenu [data-vocabulary-collection-action]").forEach((but
   }
 }));
 $("#authorBtn").addEventListener("click", openAuthorDialog);
-$("#authorQrButton").addEventListener("click", () => {
-  const dialog = $("#authorQrDialog");
-  dialog.scrollTop = 0;
-  if (!dialog.open) dialog.showModal();
-  requestAnimationFrame(() => { dialog.scrollTop = 0; });
-});
-$(".author-qr-close").addEventListener("pointerdown", (event) => {
-  if (event.button !== 0) return;
-  event.preventDefault();
-  event.stopPropagation();
-  const dialog = $("#authorQrDialog");
-  if (dialog.open) dialog.close();
+$$("[data-author-link]").forEach(button => button.addEventListener("click", async () => {
+  if (button.disabled) return;
+  button.disabled = true;
+  try {
+    const result = await window.promptDock.openAuthorLink(button.dataset.authorLink);
+    if (!result.ok) toast(result.message || "暂时无法打开链接，请稍后再试。");
+  } catch { toast("暂时无法打开链接，请稍后再试。"); }
+  finally { button.disabled = false; }
+}));
+$("#copyAuthorInfoBtn").addEventListener("click", async () => {
+  try {
+    const info = await window.promptDock.getAuthorInfo();
+    const result = await window.promptDock.copy(info.feedbackInfo);
+    toast(result.ok ? "已复制版本与系统信息，不含 Prompt 内容" : "复制失败，请重试。");
+  } catch { toast("复制失败，请重试。"); }
 });
 $("#settingsBtn").addEventListener("click", () => {
   if (batchMode) setBatchMode(false);
@@ -2079,6 +2087,13 @@ $("#settingsBtn").addEventListener("click", () => {
   $("#newPromptShortcutHint").textContent = `默认 ${IS_MAC ? "⌘N" : "Ctrl+N"}，不会影响其他软件的新建快捷键。`;
   $("#newPromptShortcutHint").classList.remove("error");
   $("#importResult").classList.add("hidden");
+  const slash = state.settings.slash || {};
+  $("#slashEnabledField").checked = Boolean(slash.enabled);
+  $("#slashConfirmField").value = slash.confirm || "Tab";
+  $("#slashShortcutField").value = slash.shortcut ?? DEFAULT_SLASH_SHORTCUT;
+  $("#slashShortcutHint").textContent = "使用全局快捷键打开搜索；无法安全插入时只复制。";
+  $("#slashShortcutHint").classList.remove("error");
+  window.promptDock.getSlashStatus().then(renderSlashStatus);
   $("#settingsDialog").showModal();
   refreshBackupStatus();
   refreshCacheStatus();
@@ -2382,6 +2397,7 @@ $("#editorForm").addEventListener("submit", async (event) => {
   const next = {
     id: editingId || crypto.randomUUID(),
     title: $("#titleField").value.trim(),
+    alias: $("#aliasField").value.trim().slice(0, 32),
     defaultVariantTitle: $("#defaultVariantTitleField").value.trim() || "默认版本",
     content: $("#contentField").value.trim(),
     usageNote: $("#usageNoteField").value.trim(),
@@ -2411,6 +2427,7 @@ $("#editorForm").addEventListener("submit", async (event) => {
   toast(existing ? "Prompt 已更新" : "Prompt 已创建");
 });
 $("#recordShortcutBtn").addEventListener("click", () => {
+  if (recordingShortcut === "slash") $("#slashShortcutField").value = state.settings.slash?.shortcut ?? DEFAULT_SLASH_SHORTCUT;
   recordingShortcut = "global";
   $("#newPromptShortcutField").value = state.settings.newPromptShortcut || DEFAULT_NEW_SHORTCUT;
   $("#shortcutField").value = "请按下组合键…";
@@ -2418,11 +2435,31 @@ $("#recordShortcutBtn").addEventListener("click", () => {
   $("#shortcutHint").classList.remove("error");
 });
 $("#recordNewPromptShortcutBtn").addEventListener("click", () => {
+  if (recordingShortcut === "slash") $("#slashShortcutField").value = state.settings.slash?.shortcut ?? DEFAULT_SLASH_SHORTCUT;
   recordingShortcut = "newPrompt";
   $("#shortcutField").value = state.settings.shortcut;
   $("#newPromptShortcutField").value = "请按下组合键…";
   $("#newPromptShortcutHint").textContent = "仅在 Prompt Dock 当前可操作时生效。";
   $("#newPromptShortcutHint").classList.remove("error");
+});
+$("#recordSlashShortcutBtn").addEventListener("click", () => {
+  if (recordingShortcut === "global") $("#shortcutField").value = state.settings.shortcut;
+  if (recordingShortcut === "newPrompt") $("#newPromptShortcutField").value = state.settings.newPromptShortcut || DEFAULT_NEW_SHORTCUT;
+  recordingShortcut = "slash";
+  $("#slashShortcutField").value = "请按下组合键…";
+  $("#slashShortcutHint").textContent = "录制全局调用快捷键（Esc 取消）。";
+  $("#slashShortcutHint").classList.remove("error");
+});
+function renderSlashStatus(status) {
+  $("#slashStatusHint").textContent = status.message || (!status.enabled ? "当前：已关闭，不监听输入" : status.paused ? "当前：临时暂停（可在托盘恢复）" : status.running ? "当前：已开启，可在托盘临时暂停" : "当前：助手未运行");
+}
+window.promptDock.onSlashStatus(status => { if (state && status.config) state.settings.slash = status.config; renderSlashStatus(status); });
+window.promptDock.onSlashUsed(usage => {
+  const prompt = state?.prompts.find(p => p.id === usage.id);
+  if (!prompt || !usage.ok) return;
+  prompt.useCount = usage.useCount; prompt.lastUsed = usage.lastUsed;
+  const variant = prompt.variants?.find(v => v.id === usage.variant);
+  if (variant) { variant.useCount = usage.variantUseCount; variant.lastUsed = usage.lastUsed; }
 });
 $("#chooseBackupDirectoryBtn").addEventListener("click", async () => {
   const result = await window.promptDock.chooseBackupDirectory();
@@ -2458,13 +2495,14 @@ window.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       $("#shortcutField").value = state.settings.shortcut;
       $("#newPromptShortcutField").value = state.settings.newPromptShortcut || DEFAULT_NEW_SHORTCUT;
+      $("#slashShortcutField").value = state.settings.slash?.shortcut ?? DEFAULT_SLASH_SHORTCUT;
       recordingShortcut = null;
       return;
     }
     const accelerator = eventToAccelerator(event);
     if (accelerator) {
-      const field = recordingShortcut === "global" ? $("#shortcutField") : $("#newPromptShortcutField");
-      const hint = recordingShortcut === "global" ? $("#shortcutHint") : $("#newPromptShortcutHint");
+      const field = recordingShortcut === "slash" ? $("#slashShortcutField") : recordingShortcut === "global" ? $("#shortcutField") : $("#newPromptShortcutField");
+      const hint = recordingShortcut === "slash" ? $("#slashShortcutHint") : recordingShortcut === "global" ? $("#shortcutHint") : $("#newPromptShortcutHint");
       field.value = accelerator;
       hint.textContent = `已录制：${displayAccelerator(accelerator)}`;
       recordingShortcut = null;
@@ -2511,6 +2549,7 @@ window.addEventListener("keydown", (event) => {
 });
 $("#settingsForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (recordingShortcut) return toast("请完成快捷键录制，或按 Esc 取消");
   const shortcut = $("#shortcutField").value;
   const newPromptShortcut = normalizeAccelerator($("#newPromptShortcutField").value);
   const newPromptShortcutError = validateNewPromptShortcut(newPromptShortcut, shortcut);
@@ -2525,6 +2564,19 @@ $("#settingsForm").addEventListener("submit", async (event) => {
     $("#shortcutHint").classList.add("error");
     return;
   }
+  const slashResult = await window.promptDock.setSlashSettings({
+    enabled: $("#slashEnabledField").checked,
+    confirm: $("#slashConfirmField").value,
+    shortcut: $("#slashShortcutField").value
+  }, [shortcut, newPromptShortcut]);
+  if (!slashResult.ok) {
+    await window.promptDock.setShortcut(state.settings.shortcut);
+    $("#slashShortcutHint").textContent = slashResult.message;
+    $("#slashShortcutHint").classList.add("error");
+    $("#slashShortcutHint").scrollIntoView({ block: "center" });
+    return;
+  }
+  state.settings.slash = slashResult.settings;
   state.settings.shortcut = shortcut;
   state.settings.newPromptShortcut = newPromptShortcut;
   state.settings.alwaysOnTop = state.settings.compactMode ? true : $("#alwaysOnTopField").checked;

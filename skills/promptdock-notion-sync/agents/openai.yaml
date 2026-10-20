@@ -1,0 +1,4 @@
+interface:
+  display_name: "Prompt Dock → Notion"
+  short_description: "将 Prompt Dock 备份增量同步到自己的 Notion 数据库，保留冲突保护"
+  default_prompt: "使用 $promptdock-notion-sync 将我提供的 .promptdock 文件同步到我指定的 Notion 数据库。"

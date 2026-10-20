@@ -14,7 +14,8 @@ if (env.PROMPT_DOCK_TEST_BACKUP) {
 }
 console.log(`Isolated test profile: ${profile}`);
 const log = fs.openSync(path.join(profile, 'smoke.log'), 'w');
-const child = spawnSync(require('electron'), [root], {
+const executable = process.argv[2] || require('electron');
+const child = spawnSync(executable, process.argv[2] ? [] : [root], {
   cwd: root, env, stdio: ['ignore', log, log], timeout: 120000
 });
 fs.closeSync(log);

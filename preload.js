@@ -4,6 +4,19 @@ contextBridge.exposeInMainWorld("promptDock", {
   platform: process.platform,
   getState: () => ipcRenderer.invoke("state:get"),
   getAppVersion: () => ipcRenderer.invoke("app:version"),
+  getUpdateStatus: () => ipcRenderer.invoke('update:get'),
+  checkForUpdates: () => ipcRenderer.invoke('update:check'),
+  downloadUpdate: () => ipcRenderer.invoke('update:download'),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
+  openUpdateRelease: () => ipcRenderer.invoke('update:open-release'),
+  setUpdateAutoCheck: (enabled) => ipcRenderer.invoke('update:preferences', enabled),
+  onUpdateStatus: (callback) => {
+    const listener = (_, status) => callback(status);
+    ipcRenderer.on('update:status', listener);
+    return () => ipcRenderer.removeListener('update:status', listener);
+  },
+  getAuthorInfo: () => ipcRenderer.invoke("app:author-info"),
+  openAuthorLink: (id) => ipcRenderer.invoke("app:author-link", id),
   getMigrationInfo: () => ipcRenderer.invoke("storage:migration-info"),
   getCacheStatus: () => ipcRenderer.invoke("cache:status"),
   clearCache: () => ipcRenderer.invoke("cache:clear"),
@@ -19,6 +32,10 @@ contextBridge.exposeInMainWorld("promptDock", {
   copy: (text) => ipcRenderer.invoke("clipboard:copy", text),
   paste: (text) => ipcRenderer.invoke("clipboard:paste", text),
   setShortcut: (shortcut) => ipcRenderer.invoke("shortcut:set", shortcut),
+  getSlashStatus: () => ipcRenderer.invoke("slash:status"),
+  setSlashSettings: (settings, reserved) => ipcRenderer.invoke("slash:settings", settings, reserved),
+  onSlashStatus: (callback) => ipcRenderer.on("slash:status", (_, status) => callback(status)),
+  onSlashUsed: (callback) => ipcRenderer.on("slash:used", (_, usage) => callback(usage)),
   chooseImages: () => ipcRenderer.invoke("image:choose"),
   importImageBuffers: (buffers) => ipcRenderer.invoke("image:import-buffers", buffers),
   pasteImage: () => ipcRenderer.invoke("image:paste"),
