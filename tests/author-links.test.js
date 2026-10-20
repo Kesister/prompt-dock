@@ -4,7 +4,7 @@ const { AUTHOR_LINKS, resolveAuthorLink, authorInfo } = require('../author-links
 
 test('author destinations are fixed HTTPS links; arbitrary URLs and prototype keys are rejected', () => {
   assert.equal(resolveAuthorLink('github'), 'https://github.com/Kesister');
-  assert.equal(resolveAuthorLink('feedback'), 'https://wood-stream-c25.notion.site/5cc968f36d944b1ab59abe70202e5147?pvs=105');
+  assert.equal(resolveAuthorLink('feedback'), 'https://kersss.notion.site/5cc968f36d944b1ab59abe70202e5147?source=copy_link');
   for (const id of [null, undefined, '', {}, [], '__proto__', 'constructor', 'toString', 'file:///C:/test', 'javascript:alert(1)', 'https://example.com']) {
     assert.equal(resolveAuthorLink(id), null);
   }
