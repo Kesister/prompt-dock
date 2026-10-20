@@ -27,6 +27,7 @@ function select(index,scroll=true){
   updatePreview();
 }
 function render() {
+  $('accessibility-settings').hidden = view.copyReason !== 'permission';
   const items = rows(); selected = Math.max(0, Math.min(selected, items.length - 1));
   $("results").replaceChildren();
   if (!items.length) { const e=document.createElement("div");e.className="empty";e.textContent="没有匹配的 Prompt";$("results").append(e); }
@@ -110,3 +111,4 @@ window.addEventListener("keyup",e=>{
 },true);
 window.addEventListener("blur",()=>{pendingConfirm="";});
 window.slash.ready({previewEnabled});
+$('accessibility-settings').addEventListener('click', () => window.slash.action({type:'accessibility-settings',session:view.session}));

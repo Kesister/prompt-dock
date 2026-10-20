@@ -2,6 +2,9 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("promptDock", {
   platform: process.platform,
+  getMacAccessibility: () => ipcRenderer.invoke('mac:accessibility'),
+  openMacAccessibility: () => ipcRenderer.invoke('mac:open-accessibility'),
+  revealMacApp: () => ipcRenderer.invoke('mac:reveal-app'),
   getState: () => ipcRenderer.invoke("state:get"),
   getAppVersion: () => ipcRenderer.invoke("app:version"),
   getUpdateStatus: () => ipcRenderer.invoke('update:get'),

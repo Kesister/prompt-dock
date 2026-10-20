@@ -10,7 +10,6 @@ struct Snapshot {
     let value: String?
     let point: CGPoint
 }
-var remembered: Snapshot?
 var captured: (String, Snapshot)?
 
 func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
@@ -59,16 +58,10 @@ func remember(_ app: NSRunningApplication?) {
           app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
           app.activationPolicy == .regular else { return }
     target = app
-    remembered = snapshot(app).0
 }
 remember(NSWorkspace.shared.frontmostApplication)
 let activated = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { note in
     remember(note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)
-}
-let deactivated = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didDeactivateApplicationNotification, object: nil, queue: .main) { note in
-    guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-          app.processIdentifier == target?.processIdentifier else { return }
-    remembered = snapshot(app).0
 }
 func reply(_ request: Any, _ data: [String: Any]) {
     var result = data; result["request"] = request
@@ -84,6 +77,9 @@ DispatchQueue.global().async {
         guard let bytes = line.data(using: .utf8), let command = (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any], let request = command["request"] else { continue }
         DispatchQueue.main.async {
             let type = command["type"] as? String ?? ""
+            if type == "permission" {
+                reply(request, ["ok": true, "trusted": AXIsProcessTrusted()]); return
+            }
             if type == "restore" {
                 let saved = captured
                 captured = nil
@@ -104,37 +100,36 @@ DispatchQueue.global().async {
             guard type == "paste" else { reply(request, ["ok": false, "reason": "invalid-command"]); return }
             guard AXIsProcessTrusted() else { reply(request, ["ok": false, "reason": "permission"]); return }
             let item: Snapshot?
+            let explicitTarget = command["token"] as? String
             if let token = command["token"] as? String {
                 item = captured?.0 == token ? captured?.1 : nil
                 captured = nil
-            } else { item = remembered }
-            guard let saved = item, !saved.app.isTerminated else {
-                let reason = snapshot(target).1
-                reply(request, ["ok": false, "reason": reason.isEmpty ? "caret-unavailable" : reason]); return
-            }
-            let (_, reason) = snapshot(saved.app)
-            if reason == "password" { reply(request, ["ok": false, "reason": reason]); return }
-            guard saved.app.activate(options: [.activateIgnoringOtherApps]) else { reply(request, ["ok": false, "reason": "target-changed"]); return }
+            } else { item = nil }
+            guard explicitTarget == nil || item != nil else { reply(request, ["ok": false, "reason": "target-changed"]); return }
+            guard let destination = item?.app ?? target, !destination.isTerminated else { reply(request, ["ok": false, "reason": "caret-unavailable"]); return }
+            // Browsers may stop exposing their focused field/selection while inactive.
+            // Main-window clicks resolve the live field after activation. Palette tokens
+            // still require the exact pre-popup field, selection and content.
+            guard destination.activate(options: [.activateIgnoringOtherApps]) else { reply(request, ["ok": false, "reason": "target-changed"]); return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                let (current, failure) = snapshot(saved.app)
+                let (current, failure) = snapshot(destination)
                 guard let current = current else { reply(request, ["ok": false, "reason": failure]); return }
-                guard NSWorkspace.shared.frontmostApplication?.processIdentifier == saved.app.processIdentifier,
-                      CFEqual(current.element, saved.element), current.range.location == saved.range.location,
-                      current.range.length == saved.range.length, current.value == saved.value else {
-                    var result: [String: Any] = ["ok": false, "reason": "target-changed"]
-                    if ProcessInfo.processInfo.environment["PROMPT_DOCK_NATIVE_TEST"] != nil {
-                        result["diagnostic"] = ["frontmost": NSWorkspace.shared.frontmostApplication?.processIdentifier == saved.app.processIdentifier,
-                            "sameElement": CFEqual(current.element, saved.element), "sameSelection": current.range.location == saved.range.location && current.range.length == saved.range.length,
-                            "sameValue": current.value == saved.value]
-                    }
-                    reply(request, result); return
-                }
+                let expected = item ?? current
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                  let (verified, failure) = snapshot(destination)
+                  guard let verified = verified else { reply(request, ["ok": false, "reason": failure]); return }
+                  guard NSWorkspace.shared.frontmostApplication?.processIdentifier == destination.processIdentifier,
+                        CFEqual(verified.element, expected.element), verified.range.location == expected.range.location,
+                        verified.range.length == expected.range.length, verified.value == expected.value else {
+                      reply(request, ["ok": false, "reason": "target-changed"]); return
+                  }
                 guard let source = CGEventSource(stateID: .hidSystemState),
                       let down = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
                       let up = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else { reply(request, ["ok": false, "reason": "event-unavailable"]); return }
                 down.flags = .maskCommand; up.flags = .maskCommand
                 down.post(tap: .cghidEventTap); up.post(tap: .cghidEventTap)
                 reply(request, ["ok": true])
+                }
             }
         }
     }

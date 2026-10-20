@@ -78,3 +78,5 @@
 !/docs/MAC-VALIDATION.md
 
 !/scripts/test-mac-native.js
+
+!/scripts/test-mac-browser.js

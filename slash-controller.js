@@ -14,8 +14,9 @@ const copyReasons = {
 };
 
 class SlashController {
-  constructor({readState, recordUse, onStatus, macInput}) {
+  constructor({readState, recordUse, onStatus, macInput, openMacAccessibility}) {
     this.macInput = macInput;
+    this.openMacAccessibility = openMacAccessibility;
     this.readState=readState;this.recordUse=recordUse;this.onStatus=onStatus;this.config=core.settings();
     this.paused=false;this.helper=null;this.window=null;this.view=null;this.activeShortcut="";this.message="";this.ready=false;this.pending=false;this.previewEnabled=true;
     ipcMain.on("slash:ready",(e,options)=>{if(e.sender===this.window?.webContents){this.previewEnabled=options?.previewEnabled!==false;this.ready=true;if(this.view)this.show(true,false);this.publish();this.reveal();}});
@@ -112,6 +113,7 @@ class SlashController {
   close(){const token=this.macToken;this.send({type:"cancel"});this.hide();if(IS_MAC&&token)this.macInput?.restore(token);}
   action(value){
     if(!this.view||value?.session!==this.view.session)return;
+    if(value.type==='accessibility-settings'&&IS_MAC){this.openMacAccessibility?.();return;}
     if(value.type==="close"){this.close();return;}
     if(value.type==="size"){
       const height=Math.max(192,Math.min(464,Number(value.height)||256));
@@ -133,7 +135,7 @@ class SlashController {
     const prompt=this.readState().prompts.find(p=>p.id===value.id&&!p.deletedAt);if(!prompt)return;
     const content=value.variant==="default"?prompt.content:prompt.variants?.find(v=>v.id===value.variant)?.content;if(typeof content!=="string")return;
     clipboard.writeText(content);
-    if(this.view.copyOnly){this.view.message="已复制，请回到输入框手动粘贴。";this.publish();clearTimeout(this.noticeTimer);this.noticeTimer=setTimeout(()=>this.close(),1800);return;}
+    if(this.view.copyOnly){this.view.message=this.view.copyReason==='permission'?'已复制。请先授权辅助功能，授权后才能直接粘贴。':'已复制，请回到输入框手动粘贴。';this.publish();clearTimeout(this.noticeTimer);if(this.view.copyReason!=='permission')this.noticeTimer=setTimeout(()=>this.close(),1800);return;}
     this.pending=true;this.chosen=value;this.view.busy=true;this.view.message="正在核对输入位置…";this.publish();
     if(this.view.palette)(IS_MAC?this.commitMacPalette(this.view.session):this.commitPalette(this.view.session));
     else this.send({type:"commit",session:this.view.session,query:this.view.query});
@@ -143,6 +145,7 @@ class SlashController {
     if(IS_MAC){
       this.window.hide();
       const result=this.macToken ? await this.macInput.paste(this.macToken) : {ok:false,reason:'caret-unavailable'};
+      if(process.env.PROMPT_DOCK_NATIVE_TEST)console.log('MAC_PALETTE_RESULT:',result);
       if(this.pending&&this.view?.session===session)this.event({type:'result',session,ok:result.ok,message:pasteMessage(result.reason)});
       return;
     }

@@ -380,6 +380,7 @@ dialog input:focus, dialog textarea:focus { border-color: #d39071; box-shadow: 0
 .path-row { display: flex; gap: 8px; }
 .path-row input { flex: 1; min-width: 0; margin: 0; }
 .path-row button { flex: 0 0 auto; }
+#macAccessibilitySection .path-row { flex-wrap: wrap; }
 .backup-meta { display: flex; justify-content: space-between; gap: 12px; margin: 7px 1px 10px; color: var(--muted); font-size: 11px; }
 .maintenance-settings { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .maintenance-settings > div:first-child { display: grid; gap: 2px; }

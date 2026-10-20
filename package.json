@@ -20,7 +20,8 @@
     "dist:mac": "npm run build:mac-helper && electron-builder --mac dmg zip --arm64 --publish never",
     "test:smoke:mac": "npm run test:smoke",
     "test:smoke": "node scripts/smoke-test.js",
-    "test:native:mac": "node scripts/test-mac-native.js"
+    "test:native:mac": "node scripts/test-mac-native.js",
+    "test:browser:mac": "node scripts/test-mac-browser.js"
   },
   "dependencies": {
     "adm-zip": "^0.6.0",

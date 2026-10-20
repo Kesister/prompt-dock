@@ -47,6 +47,7 @@ button{font:inherit;cursor:pointer;border:0;background:transparent;color:inherit
 #preview-images img{display:block;width:100%;height:72px;object-fit:contain;border:1px solid #e9e0d4;border-radius:7px;background:#fff}
 #preview-body{font-size:13px;line-height:1.75;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text;color:#403b34}
 footer{padding:10px 14px;background:#f7f3ec;color:#80786d;font-size:11px;border-top:1px solid #eae2d8;flex:none}
+#accessibility-settings{border:1px solid #dcc7b8;border-radius:6px;background:#fffdf9;color:#9c5234;padding:6px 9px;margin:8px 0 0;display:block;cursor:pointer}
 ::-webkit-scrollbar{width:4px;height:4px}
 ::-webkit-scrollbar-thumb{background:#d4c8b8;border-radius:3px}
 [hidden]{display:none!important}

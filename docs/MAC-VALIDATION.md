@@ -17,7 +17,8 @@
 
 - 共享单元测试 30/30。
 - 最终打包 `.app` 的界面、数据、窗口与升级备份回归 181/181。
-- 最终 DMG 中提取的副本通过真实 Cocoa 输入测试 4/4：正常直接粘贴、浮窗版本粘贴、密码框跳过、只读回退。
+- 修复包通过真实 Cocoa 输入测试 4/4：正常直接粘贴、浮窗版本粘贴、密码框跳过、只读回退。此测试从终端启动，会继承宿主辅助功能权限，不能证明 Finder 启动后的应用授权。
+- 独立 Chromium 接收器逐字回读 8/8：普通输入框、多行、富文本、对应三类浮窗插入、密码框和只读回退。同样属于终端授权范围。
 - 浮窗专项预览、方向键、版本切换、复制正文、偏好与窄窗布局测试。
 - DMG 只读挂载、LaunchServices 启动、严格 ad-hoc 签名完整性、Mac 元数据版本/尺寸/SHA-512 与包内资源白名单。
 - Windows 原生关键输入代码的原有哈希回归通过，Windows helper 保持专属平台打包。
@@ -28,7 +29,15 @@
 
 本机有效代码签名身份为 0；当前线上 v0.11.1 仅有 Windows 资产。正式签名、公证、原生 Squirrel 安装替换与线上 Mac 更新链仍未验收。MacUpdater 下载测试使用本地源和真实下载/校验实现，原生安装边界是测试替身，不能作为系统安装成功证据。
 
-Intel Mac、Windows 实机、多显示器、全屏/Spaces、第三方输入控件/输入法、实际撤销辅助功能权限后的系统拒绝和图片超限人工操作尚未完成。
+Intel Mac、Windows 实机、多显示器、全屏/Spaces、其他第三方输入控件/输入法和图片超限人工操作尚未完成。
+
+## 直接粘贴修复与权限边界
+
+用户反馈 Edge 搜索框只提示复制。正常 LaunchServices 启动旧包和修复包均复现 `accessibilityTrusted: false` 与 `permission`，接收器没有收到输入；系统设置中的旧同名已开启条目没有覆盖当前应用副本。上一轮仅凭终端输入测试宣布直接粘贴通过，缺少这一验证边界。
+
+修复后，主窗口直接粘贴先激活最近的目标应用，再识别并连续核对当前可编辑控件。浮窗继续核对唤出前的严格快照。助手不再在应用失去焦点时读取和缓存输入内容。设置及浮窗补充实际授权状态、准确副本定位和系统授权入口；权限不足时清楚说明原因。
+
+当前修复版的普通启动已验证，授权拒绝路径按预期保留剪贴板。实际 Edge 的正常启动填入仍须为当前副本重新授权后验证。不能将终端测试或系统设置中的同名开关视为该项通过。详见本地 `outputs/fix1/` 的修复说明和原始证据。
 
 ## 复现
 
@@ -39,6 +48,7 @@ npm run build:mac-helper
 npm run test:preview
 npm run test:smoke
 npm run test:native:mac
+npm run test:browser:mac
 npm run dist:mac
 npm run test:smoke -- "/absolute/Prompt Dock.app/Contents/MacOS/Prompt Dock"
 npm run test:native:mac -- "/absolute/Prompt Dock.app/Contents/MacOS/Prompt Dock"

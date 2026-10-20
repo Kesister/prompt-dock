@@ -396,6 +396,12 @@
         </div>
       </label>
       <p id="newPromptShortcutHint" class="hint">默认 Ctrl+N，不会影响其他软件的新建快捷键。</p>
+      <section id="macAccessibilitySection" class="slash-settings hidden">
+        <b>Mac 直接粘贴权限</b>
+        <p id="macAccessibilityStatus" class="hint" role="status">正在检测辅助功能权限…</p>
+        <p class="hint">需要为当前 Prompt Dock 应用副本授权。旧版本的同名条目不一定适用于本次安装。</p>
+        <div class="path-row"><button type="button" id="macAccessibilityOpen" class="secondary">打开辅助功能设置</button><button type="button" id="macAccessibilityReveal" class="secondary">显示当前应用</button><button type="button" id="macAccessibilityRefresh" class="secondary">重新检测</button></div>
+      </section>
       <section class="slash-settings">
         <label class="check-row"><input id="slashEnabledField" type="checkbox"><span><b>快捷调用 <em>测试功能</em></b><small>先选中其他软件的输入框，再按快捷键搜索、预览并插入 Prompt。</small></span></label>
         <label>确认插入<select id="slashConfirmField"><option value="Tab">Tab（推荐）</option><option value="Enter">Enter</option></select></label>

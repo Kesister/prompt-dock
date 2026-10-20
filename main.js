@@ -24,6 +24,7 @@ let storage;
 const IS_MAC = process.platform === "darwin";
 const DEFAULT_SHORTCUT = IS_MAC ? "Command+Alt+P" : "Control+Alt+P";
 let macHelper;
+let macPermissionNoticeShown = false;
 let windowSaveTimer;
 let windowMode = false;
 let slashController;
@@ -1954,6 +1955,17 @@ async function simulatePasteShortcut() {
   if (IS_MAC) {
     const result = await macHelper?.paste() || { ok: false, reason: 'helper-unavailable' };
     if (testProfile) console.log('MAC_PASTE_RESULT:', result);
+    if (result.ok) macPermissionNoticeShown = false;
+    if (result.reason === 'permission' && !macPermissionNoticeShown && !process.env.PROMPT_DOCK_NATIVE_TEST) {
+      macPermissionNoticeShown = true;
+      const choice = await dialog.showMessageBox(mainWindow, {
+        type: 'info', title: '直接粘贴需要辅助功能权限',
+        message: 'Prompt 已复制，当前应用尚未获得直接粘贴权限。',
+        detail: '请在系统设置 → 隐私与安全性 → 辅助功能中启用当前 Prompt Dock。若已有旧版同名条目，请重新添加当前应用副本。授权后可在设置中点击“重新检测”，再回到 Edge 输入框重试。',
+        buttons: ['打开辅助功能设置', '稍后，手动粘贴'], cancelId: 1
+      });
+      if (choice.response === 0) await openMacAccessibility();
+    }
     return { ok: result.ok, message: result.ok ? '' : pasteMessage(result.reason) };
   }
   if (process.platform !== "win32") {
@@ -1966,6 +1978,12 @@ async function simulatePasteShortcut() {
     message: result === "OK" ? "" : "无法模拟 Ctrl+V",
     diagnostic: SMOKE_TEST ? result : undefined
   };
+}
+
+async function openMacAccessibility() {
+  if (!IS_MAC) return { ok: false };
+  await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility');
+  return { ok: true };
 }
 
 function setCompactMode(enabled, requestedSize = null) {
@@ -2028,16 +2046,16 @@ app.whenReady().then(async () => {
       const output = path.join(testProfile, "native-pasted.txt");
       const scenario = process.env.PROMPT_DOCK_NATIVE_SCENARIO || 'normal';
       const target = spawn(process.env.PROMPT_DOCK_NATIVE_TEST, [output, scenario], { stdio: ['ignore', 'ignore', 'inherit'] });
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      for (let attempt = 0; attempt < 60 && !fs.existsSync(`${output}.ready`); attempt++) await new Promise(resolve => setTimeout(resolve, 100));
       const expected = "Prompt Dock 原生粘贴测试 — isolated 123";
       let paste;
-      if (scenario === 'palette') {
+      if (scenario.startsWith('palette')) {
         const data = readState();
         data.prompts[0].variants = [{ id: 'native-variant', title: '测试版本', content: expected }];
         writeState(data);
         await slashController.configure({ enabled: true, shortcut: 'Command+Shift+F8' });
         await slashController.openPalette();
-        await new Promise(resolve => setTimeout(resolve, 500));
+        for (let attempt = 0; attempt < 60 && (!slashController.ready || !slashController.window?.isVisible()); attempt++) await new Promise(resolve => setTimeout(resolve, 100));
         const acquired = slashController.view && !slashController.view.copyOnly;
         if (slashController.view) slashController.action({ type: 'choose', session: slashController.view.session, id: data.prompts[0].id, variant: 'native-variant' });
         paste = { ok: acquired };
@@ -2047,23 +2065,24 @@ app.whenReady().then(async () => {
         clipboard.writeText(expected);
         paste = await simulatePasteShortcut();
       }
-      await new Promise(resolve => setTimeout(resolve, 500));
+      for (let attempt = 0; attempt < (['password','read-only'].includes(scenario) ? 5 : 50) && !fs.existsSync(output); attempt++) await new Promise(resolve => setTimeout(resolve, 100));
       const received = fs.existsSync(output) && fs.readFileSync(output, "utf8") === expected;
       const passed = ['password','read-only'].includes(scenario) ? !paste.ok && !fs.existsSync(output) && clipboard.readText() === expected : received;
-      fs.writeFileSync(path.join(testProfile, "native-result.json"), JSON.stringify({ scenario, paste, passed, received }));
+      const permission = await macHelper.permissionStatus();
+      fs.writeFileSync(path.join(testProfile, "native-result.json"), JSON.stringify({ scenario, paste, passed, received, accessibilityTrusted: permission.trusted === true }));
       console.log("NATIVE_TEST:", { paste, passed });
       target.kill();
       app.quit();
     });
   }
-  slashController = new SlashController({ macInput: macHelper, readState, onStatus: slashStatusChanged, recordUse: (id, variant) => {
+  slashController = new SlashController({ macInput: macHelper, openMacAccessibility, readState, onStatus: slashStatusChanged, recordUse: (id, variant) => {
     const usage = getStorage().recordPromptUse(id, variant);
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("slash:used", { id, variant, ...usage });
   } });
   if (SMOKE_TEST) return;
   createTray();
   const state = readState();
-  const result = registerShortcut(state.settings.shortcut || DEFAULT_SHORTCUT);
+  const result = process.env.PROMPT_DOCK_NATIVE_TEST ? { ok: true } : registerShortcut(state.settings.shortcut || DEFAULT_SHORTCUT);
   if (!result.ok) {
     // A temporary conflict must never overwrite the user's saved preference.
     dialog.showMessageBox(mainWindow, {
@@ -2080,7 +2099,7 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", (event) => event.preventDefault());
-app.on("activate", () => { if (mainWindow) revealLauncher(); });
+app.on("activate", () => { if (mainWindow && !slashController?.view?.palette) revealLauncher(); });
 app.on("before-quit", () => { app.isQuitting = true; saveWindowSize(); });
 app.on("will-quit", () => {
   clearTimeout(windowSaveTimer);
@@ -2093,6 +2112,14 @@ app.on("will-quit", () => {
 
 ipcMain.handle("state:get", () => readState());
 ipcMain.handle("app:version", () => app.getVersion());
+for (const [channel, action] of Object.entries({
+  'mac:accessibility': async () => ({ supported: IS_MAC, ...(IS_MAC ? await macHelper?.permissionStatus() : {}) }),
+  'mac:open-accessibility': openMacAccessibility,
+  'mac:reveal-app': () => { if (IS_MAC) shell.showItemInFolder(path.resolve(process.execPath, '../../..')); return { ok: IS_MAC }; }
+})) ipcMain.handle(channel, async event => {
+  if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) return { ok: false };
+  return action();
+});
 for (const [channel, action] of Object.entries({
   'update:get': () => updateStatus(),
   'update:check': async () => { await updateController.check(); return updateStatus(); },

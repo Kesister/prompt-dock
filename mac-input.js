@@ -44,6 +44,7 @@ class MacInput {
     });
   }
   capture() { return this.request('capture'); }
+  permissionStatus() { return this.request('permission'); }
   paste(token) { return this.request('paste', { token }); }
   restore(token) { return this.request('restore', { token }); }
   dispose() { this.child.kill(); }

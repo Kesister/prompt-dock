@@ -2087,6 +2087,7 @@ $("#settingsBtn").addEventListener("click", () => {
   $("#newPromptShortcutHint").textContent = `默认 ${IS_MAC ? "⌘N" : "Ctrl+N"}，不会影响其他软件的新建快捷键。`;
   $("#newPromptShortcutHint").classList.remove("error");
   $("#importResult").classList.add("hidden");
+  if (IS_MAC) { $('#macAccessibilitySection').classList.remove('hidden'); refreshMacAccessibility(); }
   const slash = state.settings.slash || {};
   $("#slashEnabledField").checked = Boolean(slash.enabled);
   $("#slashConfirmField").value = slash.confirm || "Tab";
@@ -2454,6 +2455,14 @@ function renderSlashStatus(status) {
   $("#slashStatusHint").textContent = status.message || (!status.enabled ? "当前：已关闭，不监听输入" : status.paused ? "当前：临时暂停（可在托盘恢复）" : status.running ? "当前：已开启，可在托盘临时暂停" : "当前：助手未运行");
 }
 window.promptDock.onSlashStatus(status => { if (state && status.config) state.settings.slash = status.config; renderSlashStatus(status); });
+async function refreshMacAccessibility() {
+  const status = await window.promptDock.getMacAccessibility();
+  $('#macAccessibilityStatus').textContent = !status.ok ? '粘贴助手未就绪，请退出并重新打开应用后重试。' : status.trusted ? '辅助功能已授权，可以直接粘贴。' : '尚未获得辅助功能权限，当前只能复制，无法直接写入 Edge 等软件。';
+  return status;
+}
+$('#macAccessibilityOpen').addEventListener('click', () => window.promptDock.openMacAccessibility());
+$('#macAccessibilityReveal').addEventListener('click', () => window.promptDock.revealMacApp());
+$('#macAccessibilityRefresh').addEventListener('click', refreshMacAccessibility);
 window.promptDock.onSlashUsed(usage => {
   const prompt = state?.prompts.find(p => p.id === usage.id);
   if (!prompt || !usage.ok) return;
