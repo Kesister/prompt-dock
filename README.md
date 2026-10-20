@@ -36,7 +36,7 @@ https://github.com/user-attachments/assets/b3273881-3a8d-404b-804e-53ecfa3514eb
 | Linux | 暂未提供发行包 |
 
 - `Source code (zip / tar.gz)` 是源码，**不是安装程序**；Notion Skill 的 ZIP 也不是软件安装包。
-- 升级前建议导出一份 `.promptdock` 备份，并从托盘退出旧版本。同一 Windows 用户下，安装版沿用原有本地资料。
+- **更新软件：** 当前需手动下载新安装包；先导出 `.promptdock` 备份，再从托盘退出旧版，运行新安装包覆盖安装，一般无需先卸载。同一 Windows 用户下沿用原有本地资料。[详细步骤](docs/USER-GUIDE.md#更新软件)
 - 当前 Windows 安装包未做代码签名，系统可能显示来源或信誉提示。请确认下载自本仓库，并核对 Release 中的 SHA-256；不要为安装软件关闭系统安全防护。
 
 ## 快速开始
@@ -99,7 +99,7 @@ https://github.com/user-attachments/assets/b3273881-3a8d-404b-804e-53ecfa3514eb
 ## 反馈与参与
 
 - **Bug 或功能建议：** [GitHub Issues](https://github.com/Kesister/prompt-dock/issues)
-- **不方便使用 GitHub：** [问题反馈表单](https://wood-stream-c25.notion.site/5cc968f36d944b1ab59abe70202e5147?pvs=105)
+- **不方便使用 GitHub：** [问题反馈表单](https://kersss.notion.site/5cc968f36d944b1ab59abe70202e5147?source=copy_link)
 - **开发与贡献：** [开发指南](docs/DEVELOPMENT.md) · [贡献说明](CONTRIBUTING.md) · [更新记录](docs/CHANGELOG.md)
 
 反馈时请附上软件版本、Windows 版本、复现步骤和预期结果；截图前遮挡私人内容。可以在「关于与作者」中复制不含库内容的版本与环境信息。
