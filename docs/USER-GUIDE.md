@@ -81,7 +81,17 @@
 
 ## 更新软件
 
-目前请到 [Releases](https://github.com/Kesister/prompt-dock/releases) 手动获取安装包，不提供自动下载更新。升级前导出备份、退出托盘旧版，再运行新安装包。
+当前版本没有内置自动更新，需要手动安装新版本：
+
+1. 在「设置」中导出一份 `.promptdock` 备份。
+2. 到 [最新 Release](https://github.com/Kesister/prompt-dock/releases/latest) 查看版本号；只有比当前版本更新时才需要下载。选择 `Prompt-Dock-版本号-Setup.exe`，不要下载 `Source code` 或 Notion Skill ZIP 作为安装程序。
+3. 从 Windows 系统托盘右键退出 Prompt Dock；只关闭主窗口不算退出。
+4. 运行新安装包，沿用原安装位置覆盖安装，一般无需先卸载。使用同一 Windows 用户时，会继续读取原有本地库。
+5. 打开软件，在「关于与作者」核对版本，并检查 Prompt、图片和词库是否完整。通常不需要再次导入资料；如内容缺失，先停止清理文件，再用已保留的备份恢复。
+
+使用便携版时，先完全退出旧版，再运行新版 EXE；复制或替换 EXE 不等于备份资料库。
+
+GitHub 文档或源码更新不会自动改变已安装的软件。只有重新构建并发布的新安装包才包含软件内的改动；下载同一个版本的旧安装包不会获得尚未发布的修改。
 
 安装包未做代码签名。下载后可以在 PowerShell 中计算散列，与对应 Release 的值逐字比对：
 
