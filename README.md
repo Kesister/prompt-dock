@@ -4,14 +4,14 @@
 
 # Prompt Dock
 
-> macOS 本地试用版本：已整合 Windows v0.11.1 固定提交 `1fee92c`，继续使用同一套源码和资料格式。Mac 全局唤出为 `⌘⌥P`，应用内搜索 `⌘K`、新建 `⌘N`；快捷调用默认关闭，默认快捷键 `⌘⇧Space`，冲突时可录制替换。Mac 构建使用 `npm run dist:mac`，命令固定带 `--publish never`。当前为 ad-hoc 签名试用包，未公证，不能作为正式自动安装更新已验收的证据。详细验证见 [Mac 验证说明](docs/MAC-VALIDATION.md)。
+> macOS v0.11.1（Apple Silicon）已完成本机验收，提供[完整 Mac 安装包](https://github.com/Kesister/prompt-dock/releases/tag/mac-v0.11.1)。包含直接填入修复与快捷浮窗提速；当前为未做 Developer ID 签名及公证的预览版。详细验证见 [Mac 验证说明](docs/MAC-VALIDATION.md)。
 
 **把好用的 Prompt 留下来，需要时，随手取用。**
 
 一个本地优先的 Prompt 管理与快捷调用工具。<br>
 文字、变体、参考图片和常用关键词，在一个桌面空间里整理。
 
-[下载 Windows 版](https://github.com/Kesister/prompt-dock/releases/latest) · [视频演示](#演示) · [快速开始](#快速开始) · [使用指南](docs/USER-GUIDE.md) · [反馈问题](https://github.com/Kesister/prompt-dock/issues)
+[下载 Windows 版](https://github.com/Kesister/prompt-dock/releases/latest) · [下载 Mac 版](https://github.com/Kesister/prompt-dock/releases/tag/mac-v0.11.1) · [视频演示](#演示) · [快速开始](#快速开始) · [使用指南](docs/USER-GUIDE.md) · [反馈问题](https://github.com/Kesister/prompt-dock/issues)
 
 </div>
 
@@ -31,10 +31,12 @@ https://github.com/user-attachments/assets/b3273881-3a8d-404b-804e-53ecfa3514eb
 
 **普通用户请前往 [Releases 下载 Windows 安装包](https://github.com/Kesister/prompt-dock/releases/latest)，选择 `Prompt-Dock-版本号-Setup.exe`。**
 
+Mac 用户请在 [Mac 下载页](https://github.com/Kesister/prompt-dock/releases/tag/mac-v0.11.1)选择 `Prompt-Dock-0.11.1-Mac-arm64-Hotkey-Fix.pkg`。先退出旧版，再安装到「应用程序」；已有资料保留。首次使用按应用设置提示授予辅助功能权限，新构建可能需要重新确认授权。
+
 | 平台 | 当前状态 |
 | --- | --- |
 | Windows x64 | v0.11.1 安装版，提供安装向导、桌面快捷方式和内置更新 |
-| macOS | 适配工作保留在 [`mac-support` 分支](https://github.com/Kesister/prompt-dock/tree/mac-support)，本次未发布对应 v0.11.0 安装包 |
+| macOS Apple Silicon | v0.11.1 完整 PKG，macOS 12+；未做 Developer ID 签名及公证，内置自动安装更新暂不可用。源码位于 [`mac-support` 分支](https://github.com/Kesister/prompt-dock/tree/mac-support) |
 | Linux | 暂未提供发行包 |
 
 - `Source code (zip / tar.gz)` 是源码，**不是安装程序**；Notion Skill 的 ZIP 也不是软件安装包。
@@ -51,6 +53,8 @@ https://github.com/user-attachments/assets/b3273881-3a8d-404b-804e-53ecfa3514eb
    在设置中开启「快捷调用」，先点进目标输入框，再按默认 `Ctrl + Alt + Space`。在浮窗内搜索、选择版本，按 `Tab` 确认；也可在设置中改为 `Enter`。无法可靠定位输入框时会退回仅复制，手动粘贴即可。
 
 > 「唤出主窗口」与「快捷调用浮窗」是两套独立快捷键。当前版本不支持输入 `/` 或 `//` 触发。
+
+Mac 对应快捷键：主窗口 `⌘⌥P`，搜索 `⌘K`，新建 `⌘N`，快捷调用 `⌘⇧Space`（需先在设置开启），`Tab` 确认。
 
 ## 核心功能
 

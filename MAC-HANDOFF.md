@@ -1,51 +1,49 @@
-> Current local macOS target: v0.11.1. See docs/MAC-VALIDATION.md. The older Windows v0.11.0 handoff below is historical context. Local AGENTS.md retains the acceptance-before-upload restriction.
-
 # Mac 开发交接
 
-## 当前状态
+2026-10-21，Mac v0.11.1 已完成本机验收，用户明确要求同步 GitHub。开发分支为 [`mac-support`](https://github.com/Kesister/prompt-dock/tree/mac-support)，安装包位于独立的 [Mac 预览版下载页](https://github.com/Kesister/prompt-dock/releases/tag/mac-v0.11.1)。Windows `main` 与稳定版保留。
 
-main 分支已更新至 Windows v0.11.0。已有 mac-support 分支独立保留，本次同步不覆盖其 Mac 平台适配，也不代表已交付 Mac v0.11.0。
-本版新增 Windows 快捷调用浮窗、只读预览和作者页改版；保留单实例锁、重复启动唤出已有窗口、快捷键注册失败保留设置的修复。
+## 共享源码与平台边界
 
-当前源码分发清单不含个人 Prompt 库、词库或备份，安装包通过 Releases 分发。作者页保留头像，微信二维码已从当前源码分发清单移除，改用 GitHub 与问题反馈链接。历史提交可能仍含曾经发布的资源，不应把当前文件清单等同于历史数据清理。
+Windows/macOS 共用主程序、界面、SQLite 和 `.promptdock` 格式，平台差异使用条件分支。Mac 版对齐 Windows v0.11.1 固定提交 `1fee92ca415bec20fcd5d66f56649392b1dfe31d`，原有 Mac 适配继续保留。
 
-## 从 Mac 接续 v0.11.0
+- `assets/PromptDock.MacHelper.swift` 和 `mac-input.js` 负责 Mac 输入定位、权限及原生粘贴；Windows 的 C# 输入助手不能在 Mac 运行。
+- 主窗口 `⌘⌥P`，搜索 `⌘K`，新建 `⌘N`；快捷调用默认关闭，开启后默认 `⌘⇧Space`，`Tab` 确认。
+- 快捷浮窗预加载，定位等待设短时限；助手未就绪或目标不响应时及时显示并回退复制。无法验证输入位置时不模拟粘贴。
+- 不注册输入符号触发，不记录输入内容；密码控件跳过，粘贴不发送 Enter。
 
-在 Mac 先保存并提交本机修改，再获取远端更新。将 main 的更新合并到 mac-support 时，人工检查 main.js、preload.js、renderer.js、package.json 和打包配置的冲突；不要用 Windows 文件整份覆盖已有 Mac 实现。
-新增的 SlashHelper、FocusGrant 是 Windows 专用原生助手；不要在 macOS 编译或运行。Mac 侧应保留自己的输入定位、辅助功能权限、Command 键和打包逻辑，再适配共享的预览 UI 与作者页面。
-下方待办是初始迁移检查清单，并非对现有 Mac 分支完成度的重新评估。本次 Windows 同步没有执行 Mac 运行或打包测试。
+完整变更、原始测试范围及限制见 [Mac 验证说明](docs/MAC-VALIDATION.md)。已验收的运行代码提交为 `15431b925228a62e5ee2dbf4164b363cf377a017`；后续同步提交只更新文档。
 
-## 在 Mac 同步和运行
+## 开发与构建
 
-先安装 Node.js 22 和 Git。仓库现已公开，读取源码不需要作者的账户；提交改动请使用自己的 GitHub 账户和分支。
-在 GitHub 仓库页面复制 HTTPS 克隆地址，然后在终端执行：
+在 Mac 安装 Git、Node.js 22 和 Xcode Command Line Tools，使用本机依赖：
 
 ```sh
-git clone <从仓库页面复制的地址>
+git clone --branch mac-support https://github.com/Kesister/prompt-dock.git
 cd prompt-dock
 npm ci
-npm start
+npm run start:mac
 ```
 
-`npm ci` 使用锁文件中的依赖版本；不要把 Windows 的 node_modules 复制到 Mac。
-以后更新前先保存并提交本机修改，再运行 `git pull --ff-only`；锁文件有变化时重新运行 `npm ci`。
-如有分支分歧，应检查并合并，避免使用强制覆盖命令。
+测试必须使用隔离的绝对路径 `PROMPT_DOCK_USER_DATA`，不得导入覆盖、重置或删除真实资料库。原生测试会短暂占用焦点和剪贴板；辅助功能权限应绑定最终安装的应用副本。
 
-## Mac 适配待办
+```sh
+npm test
+npm run build:mac-helper
+npm run test:preview
+npm run test:smoke
+npm run test:native:mac
+npm run test:browser:mac
+node scripts/test-mac-palette-latency.js
+npm run dist:mac
+node scripts/build-mac-installer.js "/absolute/Prompt Dock.app" "/absolute/output"
+```
 
-- 在 Mac 实测主窗口、托盘/菜单栏、Dock 点击唤出、关闭后恢复、置顶和超小窗口。
-- 将界面快捷键及录制逻辑适配 Command：搜索、新建、图片复制等；全局唤出允许自定义。
-- `main.js` 的直接粘贴当前仅支持 Windows；Mac 暂用复制后手动 Command+V。必须实现并实测 Mac 粘贴与辅助功能权限，不能运行 Windows helper。
-- 在 package.json 添加 Mac 构建目标、图标与资源过滤，分别验证 Apple Silicon 和 Intel；不要直接运行现有 Windows 打包脚本。
-- 确认 Mac 上的单实例与快捷键冲突行为。现有 smoke 测试含 Windows 键位与布局假设，需要适配后再用于 Mac 验收。
-- 正式分发前在 macOS 构建并完成签名、公证和实际安装测试；未签名开发包不能视为正式发布完成。
+`dist:mac` 已固定使用 `--publish never`。完整 PKG 包含 Electron 与原生助手，固定安装到 `/Applications/Prompt Dock.app`，不需要启动脚本或外部 Node.js。安装包不含个人资料，没有安装前后脚本；解包后的应用与已测应用逐项一致。
 
-## 资料迁移
+## 发行与接续
 
-源码同步不等于资料同步。在 Windows 内手动导出 `.promptdock`，在 Mac 版中导入；先用测试资料验证图像、变体、词库和标签均完整。
-个人导出包不要提交到 Git。`.gitignore` 使用根目录白名单，新增源码目录时需明确加入白名单。
+本轮源码同步到 `mac-support`，Mac 安装包单独使用 `mac-v0.11.1` 标签，不改动 Windows 稳定版，也不触发只监听 `v*` 标签的 Windows 发布工作流。当前包未做 Developer ID 签名及公证，作为预览版分发，内置自动安装更新保持停用；线上 Mac 更新链和 Intel Mac 尚未验证。
 
-## 后续发布
+以后同步主分支更新时，人工检查主程序、界面、快捷调用、更新和打包配置的冲突，避免整份 Windows 文件覆盖 Mac 实现。不使用强推，不上传真实库、备份、测试输出或账户凭据。安装包放在 Releases，不写入源码历史。
 
-保留 Windows 稳定版本，Mac 适配建议使用 `mac-support` 分支。两端共享源码，用平台条件隔离系统行为。
-公开源码、选择开源许可证与分发安装包是不同操作。平台支持以 README 和对应 Release 为准，不把 Windows 发布标记为已完成 Mac 验收。
+资料迁移使用应用导出的 `.promptdock`，先在隔离库验证文字、图片、变体、词库和标签。源码同步不等于个人资料同步。
