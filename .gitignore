@@ -17,6 +17,13 @@
 !/scripts/
 !/tests/
 !/README.md
+!/CONTRIBUTING.md
+!/docs/
+/docs/*
+!/docs/USER-GUIDE.md
+!/docs/DEVELOPMENT.md
+!/docs/NOTION-SKILL.md
+!/docs/CHANGELOG.md
 !/MAC-HANDOFF.md
 !/assets/
 /assets/*
