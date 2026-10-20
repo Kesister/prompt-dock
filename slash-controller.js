@@ -41,7 +41,8 @@ class SlashController {
     this.onStatus?.();return {ok:true,...this.status()};
   }
   start(){
-    if(IS_MAC)return;
+    // Load the hidden Mac palette before the hotkey, including its renderer.
+    if(IS_MAC){this.ensureWindow();return;}
     if(this.helper||!this.config.enabled||this.paused)return;
     const child=spawn(this.executable(),[String(process.pid)],{windowsHide:true,stdio:["pipe","pipe","ignore"]});this.helper=child;let buffer="";
     child.stdout.setEncoding("utf8");child.stdout.on("data",chunk=>{buffer+=chunk;let i;while((i=buffer.indexOf("\n"))>=0){const line=buffer.slice(0,i);buffer=buffer.slice(i+1);try{if(this.helper===child)this.event(JSON.parse(line));}catch{}}});
@@ -73,7 +74,11 @@ class SlashController {
       const fresh=event.session!==this.view?.session;
       if(fresh){this.invalidate();this.view={...event,confirm:this.config.confirm,message:event.copyOnly?(copyReasons[event.copyReason]||"当前输入位置无法验证，本次仅复制。"):"",busy:false};this.pending=false;}
       else Object.assign(this.view,{query:event.query});
-      this.view.items=this.search(this.view.query);this.show(fresh);this.publish();
+      this.view.items=this.search(this.view.query);
+      // Populate the warmed Mac renderer before showing/focusing it. Otherwise
+      // the focus IPC can reach the just-cleared view before its search field.
+      this.show(fresh,!(IS_MAC&&fresh));this.publish();
+      if(IS_MAC&&fresh&&this.ready)this.reveal();
     }
     if(event.type==="key"&&event.session===this.view?.session&&!this.pending)this.window?.webContents.send("slash:key",event.key);
     if(event.type==="closed"&&event.session===this.view?.session&&!this.pending&&!this.view.finished)this.hide();
@@ -87,8 +92,8 @@ class SlashController {
   ensureWindow(){
     if(this.window&&!this.window.isDestroyed())return;
     this.ready=false;
-    this.window=new BrowserWindow({width:400,height:440,frame:false,show:false,focusable:Boolean(this.view?.palette),skipTaskbar:true,resizable:false,maximizable:false,minimizable:false,alwaysOnTop:true,backgroundColor:"#fffdf9",
-      webPreferences:{preload:path.join(__dirname,"slash-preload.js"),contextIsolation:true,nodeIntegration:false,sandbox:true}});
+    this.window=new BrowserWindow({width:400,height:440,frame:false,show:false,focusable:IS_MAC||Boolean(this.view?.palette),skipTaskbar:true,resizable:false,maximizable:false,minimizable:false,alwaysOnTop:true,backgroundColor:"#fffdf9",
+      webPreferences:{preload:path.join(__dirname,"slash-preload.js"),contextIsolation:true,nodeIntegration:false,sandbox:true,...(IS_MAC?{backgroundThrottling:false}:{})}});
     this.window.setMenuBarVisibility(false);this.window.loadFile(path.join(__dirname,"slash.html"));
     this.window.webContents.setWindowOpenHandler(()=>({action:"deny"}));this.window.webContents.on("will-navigate",e=>e.preventDefault());
     this.window.on("blur",()=>{if(this.view?.palette&&!this.pending)this.close();});
@@ -99,7 +104,8 @@ class SlashController {
     let point=this.view.x!=null?(IS_MAC?{x:this.view.x,y:this.view.y}:screen.screenToDipPoint({x:this.view.x,y:this.view.y})):screen.getCursorScreenPoint();
     const area=screen.getDisplayNearestPoint(point).workArea;
     const {x,y,width,height}=preview.bounds(point,area,Boolean(this.view.palette&&this.previewEnabled),this.view.height||256);
-    this.window.setBounds({x,y,width,height});
+    const current=this.window.getBounds();
+    if(current.x!==x||current.y!==y||current.width!==width||current.height!==height)this.window.setBounds({x,y,width,height});
     if(this.window.isFocusable()!==Boolean(this.view.palette))this.window.setFocusable(Boolean(this.view.palette));
     if(!IS_MAC){const a=screen.dipToScreenPoint({x,y}),b=screen.dipToScreenPoint({x:x+width,y:y+height});this.send({type:"bounds",x:a.x,y:a.y,width:b.x-a.x,height:b.y-a.y});}
     if(reveal&&this.ready)this.reveal();

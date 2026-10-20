@@ -81,3 +81,4 @@
 
 !/scripts/test-mac-browser.js
 !/scripts/build-mac-installer.js
+!/scripts/test-mac-palette-latency.js

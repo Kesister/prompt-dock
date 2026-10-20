@@ -27,10 +27,21 @@ if mode == "password" {
 window.makeKeyAndOrderFront(nil)
 window.makeFirstResponder(mode == "password" ? secure : textView)
 app.activate(ignoringOtherApps: true)
+// Test-only heartbeat: the next hotkey starts after the receiver actually
+// regains foreground focus, rather than racing an unfinished app switch.
+func writeFocusStatus() {
+    let status: [String: Any] = ["active": NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier && window.isKeyWindow,
+        "updatedAt": Date().timeIntervalSince1970 * 1000]
+    if let bytes = try? JSONSerialization.data(withJSONObject: status) { try? bytes.write(to: URL(fileURLWithPath: output + ".status"), options: .atomic) }
+}
+let focusTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in writeFocusStatus() }
 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+    writeFocusStatus()
     let status: [String: Any] = ["pid": ProcessInfo.processInfo.processIdentifier,
         "frontmost": NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0,
         "keyWindow": window.isKeyWindow, "firstResponder": String(describing: type(of: window.firstResponder!))]
     if let bytes = try? JSONSerialization.data(withJSONObject: status) { try? bytes.write(to: URL(fileURLWithPath: output + ".ready")) }
+    // Reproduce a target application that stops answering Accessibility messages.
+    if mode == "slow-capture" { Thread.sleep(forTimeInterval: 3.0) }
 }
 app.run()

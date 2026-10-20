@@ -12,46 +12,72 @@ struct Snapshot {
 }
 var captured: (String, Snapshot)?
 
-func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
-    var value: CFTypeRef?
-    guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
-    return value
+// Bound every remote AX message, as well as the entire snapshot. A stalled
+// application must not block hotkey presentation or leave commands queued.
+final class AXReader {
+    let deadline: TimeInterval
+    var timedOut = false
+    init(budget: TimeInterval) { deadline = ProcessInfo.processInfo.systemUptime + budget }
+    func prepare(_ element: AXUIElement) -> Bool {
+        let remaining = deadline - ProcessInfo.processInfo.systemUptime
+        guard !timedOut, remaining > 0.001 else { timedOut = true; return false }
+        return AXUIElementSetMessagingTimeout(element, Float(min(remaining, 0.1))) == .success
+    }
+    func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+        guard prepare(element) else { return nil }
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(element, name as CFString, &value)
+        if result == .cannotComplete { timedOut = true }
+        return result == .success ? value : nil
+    }
+    func editable(_ element: AXUIElement) -> Bool {
+        guard prepare(element) else { return false }
+        var value = DarwinBoolean(false)
+        let result = AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &value)
+        if result == .cannotComplete { timedOut = true }
+        return result == .success && value.boolValue
+    }
+    func reason(_ fallback: String) -> String {
+        return timedOut || ProcessInfo.processInfo.systemUptime >= deadline ? "timeout" : fallback
+    }
 }
-func focused(_ app: NSRunningApplication) -> AXUIElement? {
-    guard let value = attribute(AXUIElementCreateApplication(app.processIdentifier), kAXFocusedUIElementAttribute),
+func focused(_ app: NSRunningApplication, _ reader: AXReader) -> AXUIElement? {
+    guard let value = reader.attribute(AXUIElementCreateApplication(app.processIdentifier), kAXFocusedUIElementAttribute),
           CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
     return (value as! AXUIElement)
 }
-func snapshot(_ app: NSRunningApplication?) -> (Snapshot?, String) {
+func snapshot(_ app: NSRunningApplication?, budget: TimeInterval = 0.5) -> (Snapshot?, String) {
     guard AXIsProcessTrusted() else { return (nil, "permission") }
-    guard let app = app, !app.isTerminated, let element = focused(app) else { return (nil, "caret-unavailable") }
+    let reader = AXReader(budget: budget)
+    guard let app = app, !app.isTerminated, let element = focused(app, reader) else { return (nil, reader.reason("caret-unavailable")) }
     // Check the focused element and ancestors; never inject into a secure field.
     var ancestor: AXUIElement? = element
     for _ in 0..<8 {
         guard let current = ancestor else { break }
-        let role = attribute(current, kAXRoleAttribute) as? String ?? ""
-        let subrole = attribute(current, kAXSubroleAttribute) as? String ?? ""
+        let role = reader.attribute(current, kAXRoleAttribute) as? String ?? ""
+        let subrole = reader.attribute(current, kAXSubroleAttribute) as? String ?? ""
         if role.localizedCaseInsensitiveContains("secure") || subrole.localizedCaseInsensitiveContains("secure") {
             return (nil, "password")
         }
-        if let parent = attribute(current, kAXParentAttribute), CFGetTypeID(parent) == AXUIElementGetTypeID() {
+        if let parent = reader.attribute(current, kAXParentAttribute), CFGetTypeID(parent) == AXUIElementGetTypeID() {
             ancestor = (parent as! AXUIElement)
         } else { ancestor = nil }
     }
-    let role = attribute(element, kAXRoleAttribute) as? String ?? ""
-    guard [kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole].contains(role) else { return (nil, "caret-unavailable") }
-    var editable = DarwinBoolean(false)
-    guard AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &editable) == .success,
-          editable.boolValue, (attribute(element, kAXEnabledAttribute) as? Bool) != false else { return (nil, "read-only") }
-    guard let rawRange = attribute(element, kAXSelectedTextRangeAttribute), CFGetTypeID(rawRange) == AXValueGetTypeID() else { return (nil, "caret-unavailable") }
+    guard !reader.timedOut else { return (nil, "timeout") }
+    let role = reader.attribute(element, kAXRoleAttribute) as? String ?? ""
+    guard [kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole].contains(role) else { return (nil, reader.reason("caret-unavailable")) }
+    guard reader.editable(element), (reader.attribute(element, kAXEnabledAttribute) as? Bool) != false else { return (nil, reader.reason("read-only")) }
+    guard let rawRange = reader.attribute(element, kAXSelectedTextRangeAttribute), CFGetTypeID(rawRange) == AXValueGetTypeID() else { return (nil, reader.reason("caret-unavailable")) }
     var range = CFRange()
     guard AXValueGetValue(rawRange as! AXValue, .cfRange, &range), range.location >= 0 else { return (nil, "caret-unavailable") }
     var point = CGPoint(x: 120, y: 120)
     var size = CGSize.zero
-    if let raw = attribute(element, kAXPositionAttribute), CFGetTypeID(raw) == AXValueGetTypeID() { _ = AXValueGetValue(raw as! AXValue, .cgPoint, &point) }
-    if let raw = attribute(element, kAXSizeAttribute), CFGetTypeID(raw) == AXValueGetTypeID() { _ = AXValueGetValue(raw as! AXValue, .cgSize, &size) }
+    if let raw = reader.attribute(element, kAXPositionAttribute), CFGetTypeID(raw) == AXValueGetTypeID() { _ = AXValueGetValue(raw as! AXValue, .cgPoint, &point) }
+    if let raw = reader.attribute(element, kAXSizeAttribute), CFGetTypeID(raw) == AXValueGetTypeID() { _ = AXValueGetValue(raw as! AXValue, .cgSize, &size) }
     point.y += min(size.height, 60)
-    return (Snapshot(app: app, element: element, range: range, value: attribute(element, kAXValueAttribute) as? String, point: point), "")
+    let value = reader.attribute(element, kAXValueAttribute) as? String
+    guard reader.reason("").isEmpty else { return (nil, "timeout") }
+    return (Snapshot(app: app, element: element, range: range, value: value, point: point), "")
 }
 func remember(_ app: NSRunningApplication?) {
     guard let app = app, app.processIdentifier != owner,
@@ -68,7 +94,8 @@ func reply(_ request: Any, _ data: [String: Any]) {
     if ProcessInfo.processInfo.environment["PROMPT_DOCK_NATIVE_TEST"] != nil && data["ok"] as? Bool == false {
         result["targetApp"] = target?.bundleIdentifier ?? "none"
         result["targetExists"] = target != nil
-        if let app = target, let field = focused(app) { result["role"] = attribute(field, kAXRoleAttribute) as? String ?? "none" }
+        let reader = AXReader(budget: 0.02)
+        if let app = target, let field = focused(app, reader) { result["role"] = reader.attribute(field, kAXRoleAttribute) as? String ?? "none" }
     }
     if let bytes = try? JSONSerialization.data(withJSONObject: result), let string = String(data: bytes, encoding: .utf8) { print(string); fflush(stdout) }
 }
@@ -90,7 +117,7 @@ DispatchQueue.global().async {
                 reply(request, ["ok": true]); return
             }
             if type == "capture" {
-                let (fresh, reason) = snapshot(target)
+                let (fresh, reason) = snapshot(target, budget: 0.15)
                 guard let item = fresh else { captured = nil; reply(request, ["ok": false, "reason": reason]); return }
                 let token = UUID().uuidString
                 captured = (token, item)

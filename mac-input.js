@@ -19,7 +19,13 @@ class MacInput {
         const line = buffer.slice(0, end); buffer = buffer.slice(end + 1);
         try {
           const reply = JSON.parse(line);
-          if (reply.type === 'ready') { this.markReady(true); continue; }
+          if (reply.type === 'ready') {
+            this.markReady(true);
+            // A delayed first launch may outlive the initial readiness timer.
+            // Future hotkeys can recover, without sending an expired request.
+            this.ready = Promise.resolve(true);
+            continue;
+          }
           this.pending.get(reply.request)?.(reply);
         } catch {}
       }
@@ -33,17 +39,25 @@ class MacInput {
     this.child.on('exit', stopped);
     this.child.stdin.on('error', stopped);
   }
-  async request(type, payload = {}) {
-    if (!await this.ready || this.stopped) return { ok: false, reason: 'helper-unavailable' };
+  async request(type, payload = {}, timeoutMs = 2200) {
+    // Keep the existing startup allowance for permission/paste operations.
+    // Only hotkey capture must include readiness in its short deadline.
+    if (type !== 'capture' && (!await this.ready || this.stopped)) return { ok: false, reason: 'helper-unavailable' };
     const request = ++this.sequence;
     return new Promise(resolve => {
-      const timer = setTimeout(() => finish({ ok: false, reason: 'timeout' }), 2200);
-      const finish = result => { clearTimeout(timer); this.pending.delete(request); resolve(result); };
-      this.pending.set(request, finish);
-      this.child.stdin.write(JSON.stringify({ ...payload, type, request }) + '\n');
+      let done = false;
+      const finish = result => { if (done) return; done = true; clearTimeout(timer); this.pending.delete(request); resolve(result); };
+      // The deadline includes startup, so a silent helper cannot hold the popup.
+      const timer = setTimeout(() => finish({ ok: false, reason: 'timeout' }), timeoutMs);
+      this.ready.then(ready => {
+        if (done) return;
+        if (!ready || this.stopped) { finish({ ok: false, reason: 'helper-unavailable' }); return; }
+        this.pending.set(request, finish);
+        this.child.stdin.write(JSON.stringify({ ...payload, type, request }) + '\n');
+      });
     });
   }
-  capture() { return this.request('capture'); }
+  capture() { return this.request('capture', {}, 200); }
   permissionStatus() { return this.request('permission'); }
   paste(token) { return this.request('paste', { token }); }
   restore(token) { return this.request('restore', { token }); }
