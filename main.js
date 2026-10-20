@@ -9,6 +9,7 @@ const { IMAGE_SCHEME, PromptStorage, decodeDataImage, parseAssetUrl } = require(
 const { SlashController } = require("./slash-controller");
 const slashCore = require("./slash-core");
 const { resolveAuthorLink, authorInfo } = require("./author-links");
+const { UpdateController, RELEASE_URL } = require("./update-controller");
 const os = require("os");
 const smokeAuthorLinks = [];
 
@@ -19,6 +20,9 @@ let normalWindowBounds = null;
 let pasteQueue = Promise.resolve();
 let storage;
 let slashController;
+let updateController;
+let updateTimer;
+let updatePreferences = { autoCheck: true };
 const DEFAULT_SHORTCUT = "Control+Alt+P";
 const MAX_PROMPT_IMAGES = 6;
 const MAX_SOURCE_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -389,6 +393,69 @@ function createAutomaticBackup(state, reason = "daily") {
   createPromptDockArchive(state, destination);
   pruneAutomaticBackups(directory);
   return { ok: true, path: destination, at: new Date().toISOString() };
+}
+
+function createUpdateBackup() {
+  const current = readState();
+  const directory = String(current.settings.backupDirectory || '').trim()
+    || path.join(app.getPath('userData'), 'update-backups');
+  fs.mkdirSync(directory, { recursive: true });
+  const disk = fs.statfsSync(directory);
+  const required = Math.max(50 * 1024 * 1024, getStorage().getStats().imageBytes * 1.2 + Buffer.byteLength(JSON.stringify(current)) * 2);
+  if (Number(disk.bavail) * Number(disk.bsize) < required) throw new Error('备份空间不足');
+  const destination = path.join(directory, `Prompt-Dock-before-update-${localTimeStamp()}-${randomUUID()}.promptdock`);
+  const temporary = `${destination}.tmp`;
+  try {
+    createPromptDockArchive(current, temporary);
+    const archive = new AdmZip(temporary);
+    const manifest = JSON.parse(archive.readAsText('manifest.json'));
+    if (manifest.prompts.length !== current.prompts.length) throw new Error('备份校验失败');
+    fs.renameSync(temporary, destination);
+  } catch (error) {
+    try { fs.unlinkSync(temporary); } catch {}
+    throw error;
+  }
+  return { ok: true, path: destination };
+}
+
+function updateStatus() {
+  return { ...updateController.snapshot(), autoCheck: updatePreferences.autoCheck };
+}
+
+function sendUpdateStatus() {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update:status', updateStatus());
+}
+
+function scheduleUpdateCheck() {
+  clearTimeout(updateTimer);
+  if (SMOKE_TEST || !updatePreferences.autoCheck) return;
+  updateTimer = setTimeout(async () => {
+    await updateController.check();
+    if (updatePreferences.autoCheck) {
+      updateTimer = setTimeout(scheduleUpdateCheck, 6 * 60 * 60 * 1000);
+      updateTimer.unref();
+    }
+  }, 8000);
+  updateTimer.unref();
+}
+
+function initializeUpdates() {
+  try {
+    const saved = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'update-preferences.json'), 'utf8'));
+    updatePreferences.autoCheck = saved.autoCheck !== false;
+  } catch {}
+  const enabled = process.platform === 'win32' && app.isPackaged && !SMOKE_TEST;
+  updateController = new UpdateController({
+    updater: enabled ? require('electron-updater').autoUpdater : null,
+    enabled,
+    currentVersion: app.getVersion(),
+    canInstall: enabled && !process.env.PORTABLE_EXECUTABLE_FILE,
+    backup: createUpdateBackup,
+    prepareQuit: () => { app.isQuitting = true; },
+    cancelQuit: () => { app.isQuitting = false; }
+  });
+  updateController.on('status', sendUpdateStatus);
+  scheduleUpdateCheck();
 }
 
 function sanitizeImportedPrompt(prompt) {
@@ -1704,6 +1771,51 @@ function createWindow() {
     result.slashPreviewToggleWorks = await slashController.window.webContents.executeJavaScript("document.querySelector('#preview').hidden && localStorage.getItem('promptDock.quickPreview') === 'false'");
     slashController.close();
     if (!result.slashSelectedPreviewWorks || !result.slashPreviewToggleWorks) throw new Error("Slash preview smoke test failed");
+    // Exercise updates through the real isolated window/IPC without network or launching an installer.
+    console.log('SMOKE_PHASE:update-start');
+    const { EventEmitter } = require('events');
+    const testUpdater = new EventEmitter();
+    let testInstalled = false;
+    testUpdater.setFeedURL = () => {};
+    testUpdater.checkForUpdates = async () => testUpdater.emit('update-available', { version: '99.0.0', releaseNotes: '自动检查新版本\n点击下载，完成后重启更新。\n<img src=x onerror=alert(1)>' });
+    testUpdater.downloadUpdate = async () => {
+      testUpdater.emit('download-progress', { percent: 45 });
+      await new Promise(resolve => setTimeout(resolve, 60));
+      testUpdater.emit('update-downloaded', { version: '99.0.0' });
+    };
+    testUpdater.quitAndInstall = () => { testInstalled = true; };
+    const savedUpdateController = updateController;
+    updateController = new UpdateController({ updater: testUpdater, currentVersion: app.getVersion(), backup: createUpdateBackup });
+    updateController.on('status', sendUpdateStatus);
+    sendUpdateStatus();
+    await new Promise(resolve => setTimeout(resolve, 100));
+    await mainWindow.webContents.executeJavaScript("document.querySelectorAll('dialog[open]').forEach(d => d.close()); document.querySelector('#settingsBtn').click(); document.querySelector('#updateCheckBtn').click()");
+    console.log('SMOKE_PHASE:update-check-clicked');
+    await new Promise(resolve => setTimeout(resolve, 180));
+    result.updateCheckUi = await mainWindow.webContents.executeJavaScript("document.querySelector('#updateDialog').open && document.querySelector('#updateActionBtn').textContent === '下载更新' && !document.querySelector('#updateReleaseNotes img') && document.querySelector('#updateReleaseNotes').textContent.includes('自动检查新版本') && !document.querySelector('#updateReleaseNotes').textContent.includes('<img')");
+    console.log(`SMOKE_PHASE:update-check-${result.updateCheckUi}`);
+    const updateScreenshotPath = path.join(app.getPath('userData'), 'update-dialog-smoke.png');
+    mainWindow.showInactive();
+    await new Promise(resolve => setTimeout(resolve, 180));
+    fs.writeFileSync(updateScreenshotPath, (await mainWindow.webContents.capturePage()).toPNG());
+    result.updateScreenshotPath = updateScreenshotPath;
+    await mainWindow.webContents.executeJavaScript("document.querySelector('#updateActionBtn').click()");
+    await new Promise(resolve => setTimeout(resolve, 160));
+    result.updateDownloadUi = await mainWindow.webContents.executeJavaScript("document.querySelector('#updateActionBtn').textContent === '重启并更新'");
+    console.log(`SMOKE_PHASE:update-download-${result.updateDownloadUi}`);
+    await mainWindow.webContents.executeJavaScript("document.querySelector('#updateLaterBtn').click()");
+    result.updateLaterDoesNotInstall = !testInstalled && updateController.snapshot().phase === 'downloaded';
+    await mainWindow.webContents.executeJavaScript("document.querySelector('#updateDetailsBtn').click(); document.querySelector('#updateActionBtn').click()");
+    await new Promise(resolve => setTimeout(resolve, 250));
+    const snapshotDirectory = String(readState().settings.backupDirectory || '').trim() || path.join(app.getPath('userData'), 'update-backups');
+    const snapshotFile = fs.readdirSync(snapshotDirectory).find(name => /^Prompt-Dock-before-update-.*\.promptdock$/.test(name));
+    const snapshotArchive = snapshotFile && new AdmZip(path.join(snapshotDirectory, snapshotFile));
+    const snapshotManifest = snapshotArchive && JSON.parse(snapshotArchive.readAsText('manifest.json'));
+    result.updateBackupAndInstall = testInstalled && snapshotManifest.prompts.length === readState().prompts.length
+      && snapshotManifest.vocabulary.entries.length === readState().vocabulary.entries.length
+      && snapshotManifest.prompts.every(prompt => prompt.imageRefs.every(ref => snapshotArchive.getEntry(ref)));
+    updateController = savedUpdateController;
+    if (!result.updateCheckUi || !result.updateDownloadUi || !result.updateLaterDoesNotInstall || !result.updateBackupAndInstall) throw new Error('Update smoke test failed');
     fs.writeFileSync(path.join(app.getPath("userData"), "smoke-result.json"), JSON.stringify(result, null, 2));
     console.log(`SMOKE_OK:${JSON.stringify(result)}`);
     app.isQuitting = true;
@@ -1809,6 +1921,7 @@ function setCompactMode(enabled, requestedSize = null) {
 
 app.whenReady().then(() => {
   getStorage().ensureDatabase();
+  initializeUpdates();
   protocol.handle(IMAGE_SCHEME, (request) => {
     const filePath = getStorage().assetPathFromUrl(request.url);
     if (!filePath) return new Response("Not found", { status: 404 });
@@ -1840,6 +1953,7 @@ app.whenReady().then(() => {
 
 app.on("window-all-closed", (event) => event.preventDefault());
 app.on("will-quit", () => {
+  clearTimeout(updateTimer);
   slashController?.dispose();
   globalShortcut.unregisterAll();
   storage?.close();
@@ -1847,6 +1961,35 @@ app.on("will-quit", () => {
 
 ipcMain.handle("state:get", () => readState());
 ipcMain.handle("app:version", () => app.getVersion());
+for (const [channel, action] of Object.entries({
+  'update:get': () => updateStatus(),
+  'update:check': async () => { await updateController.check(); return updateStatus(); },
+  'update:download': async () => { await updateController.download(); return updateStatus(); },
+  'update:install': async () => { await updateController.install(); return updateStatus(); },
+  'update:open-release': async () => {
+    if (!SMOKE_TEST) await shell.openExternal(RELEASE_URL);
+    return { ok: true };
+  },
+  'update:preferences': (_, autoCheck) => {
+    const next = { autoCheck: autoCheck !== false };
+    const file = path.join(app.getPath('userData'), 'update-preferences.json');
+    try {
+      fs.writeFileSync(`${file}.tmp`, JSON.stringify(next));
+      fs.renameSync(`${file}.tmp`, file);
+    } catch { return { ok: false, message: '无法保存更新偏好，请重试。' }; }
+    updatePreferences = next;
+    sendUpdateStatus();
+    scheduleUpdateCheck();
+    return { ok: true, ...updateStatus() };
+  }
+})) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) {
+      return { ok: false, message: '无法执行这个更新操作。' };
+    }
+    return action(event, ...args);
+  });
+}
 ipcMain.handle("app:author-info", () => authorInfo(app.getVersion(), process.platform, os.release(), process.arch));
 ipcMain.handle("app:author-link", async (event, id) => {
   const url = resolveAuthorLink(id);

@@ -31,12 +31,12 @@ https://github.com/user-attachments/assets/b3273881-3a8d-404b-804e-53ecfa3514eb
 
 | 平台 | 当前状态 |
 | --- | --- |
-| Windows x64 | v0.11.0 安装版，提供安装向导和桌面快捷方式 |
+| Windows x64 | v0.11.1 安装版，提供安装向导、桌面快捷方式和内置更新 |
 | macOS | 适配工作保留在 [`mac-support` 分支](https://github.com/Kesister/prompt-dock/tree/mac-support)，本次未发布对应 v0.11.0 安装包 |
 | Linux | 暂未提供发行包 |
 
 - `Source code (zip / tar.gz)` 是源码，**不是安装程序**；Notion Skill 的 ZIP 也不是软件安装包。
-- **更新软件：** 当前需手动下载新安装包；先导出 `.promptdock` 备份，再从托盘退出旧版，运行新安装包覆盖安装，一般无需先卸载。同一 Windows 用户下沿用原有本地资料。[详细步骤](docs/USER-GUIDE.md#更新软件)
+- **更新软件：** v0.11.1 起可在设置中检查更新、下载新版并重启安装；安装前会自动备份资料。旧版用户首次升级仍需下载新安装包覆盖安装。[详细步骤](docs/USER-GUIDE.md#更新软件)
 - 当前 Windows 安装包未做代码签名，系统可能显示来源或信誉提示。请确认下载自本仓库，并核对 Release 中的 SHA-256；不要为安装软件关闭系统安全防护。
 
 ## 快速开始

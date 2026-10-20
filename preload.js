@@ -3,6 +3,17 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("promptDock", {
   getState: () => ipcRenderer.invoke("state:get"),
   getAppVersion: () => ipcRenderer.invoke("app:version"),
+  getUpdateStatus: () => ipcRenderer.invoke('update:get'),
+  checkForUpdates: () => ipcRenderer.invoke('update:check'),
+  downloadUpdate: () => ipcRenderer.invoke('update:download'),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
+  openUpdateRelease: () => ipcRenderer.invoke('update:open-release'),
+  setUpdateAutoCheck: (enabled) => ipcRenderer.invoke('update:preferences', enabled),
+  onUpdateStatus: (callback) => {
+    const listener = (_, status) => callback(status);
+    ipcRenderer.on('update:status', listener);
+    return () => ipcRenderer.removeListener('update:status', listener);
+  },
   getAuthorInfo: () => ipcRenderer.invoke("app:author-info"),
   openAuthorLink: (id) => ipcRenderer.invoke("app:author-link", id),
   getMigrationInfo: () => ipcRenderer.invoke("storage:migration-info"),

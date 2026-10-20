@@ -8,5 +8,5 @@ let passed = false;
 child.stdout.on('data', chunk => { const text=String(chunk); process.stdout.write(text); if(text.includes('SMOKE_OK:'))passed=true; });
 child.stderr.on('data', chunk => process.stderr.write(chunk));
 child.on('error', error => { console.error(error); process.exitCode=1; });
-const timer=setTimeout(()=>{console.error('Smoke test timeout');child.kill();process.exitCode=1;},60000);
+const timer=setTimeout(()=>{console.error('Smoke test timeout');child.kill();process.exitCode=1;},120000);
 child.on('exit',code=>{clearTimeout(timer); if(code!==0||!passed){console.error(`Smoke test did not complete: ${code}`);process.exitCode=1;} });

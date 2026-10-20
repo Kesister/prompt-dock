@@ -1,6 +1,6 @@
 {
   "name": "prompt-dock",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "description": "本地优先的 Prompt 桌面启动器",
   "main": "main.js",
   "author": "Codex",
@@ -11,11 +11,15 @@
     "build:focus": "node scripts/build-focus-grant.js",
     "test:slash": "node --test tests/slash-core.test.js",
     "test:preview": "node scripts/test-slash-preview.js",
+    "test": "node --test tests/slash-core.test.js tests/author-links.test.js tests/installer-config.test.js tests/update-controller.test.js tests/update-download.test.js",
     "dist": "npm run build:slash && npm run build:focus && electron-builder --win portable",
-    "dist:installer": "electron-builder --win nsis"
+    "dist:installer": "npm run build:slash && npm run build:focus && electron-builder --win nsis --x64 --publish never",
+    "release:prepare": "node scripts/prepare-release.js"
   },
   "dependencies": {
-    "adm-zip": "^0.6.0"
+    "adm-zip": "^0.6.0",
+    "electron-updater": "6.6.2",
+    "semver": "7.7.3"
   },
   "devDependencies": {
     "electron": "^37.2.3",
@@ -28,6 +32,8 @@
     "files": [
       "main.js",
       "author-links.js",
+      "update-controller.js",
+      "update-renderer.js",
       "storage.js",
       "preload.js",
       "renderer.js",
@@ -48,9 +54,10 @@
     "win": {
       "icon": "assets/app.ico",
       "target": [
-        "portable"
+        "nsis"
       ]
     },
+    "publish": [{ "provider": "github", "owner": "Kesister", "repo": "prompt-dock", "releaseType": "release" }],
     "nsis": {
       "artifactName": "Prompt-Dock-${version}-Setup.${ext}",
       "oneClick": false,

@@ -1,0 +1,54 @@
+name: Publish Windows release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Validate version and prevent overwriting a release
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Use a stable application version.' }
+          $tag = "v$version"
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne $tag) { throw 'Tag and package version differ.' }
+          "RELEASE_TAG=$tag" >> $env:GITHUB_ENV
+          gh release view $tag --repo $env:GITHUB_REPOSITORY 2>$null
+          if ($LASTEXITCODE -eq 0) { throw 'This release already exists. Increase the version before publishing.' }
+          $global:LASTEXITCODE = 0
+      - name: Run regression tests
+        run: npm test
+      - name: Build Windows installer and update metadata
+        run: npm run dist:installer
+      - name: Smoke test packaged app
+        run: node scripts/smoke-test.js "dist/win-unpacked/Prompt Dock.exe"
+        shell: pwsh
+      - name: Verify installer and prepare release notes
+        run: npm run release:prepare
+      - name: Create draft and upload all update artifacts
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          gh release create $env:RELEASE_TAG "dist/Prompt-Dock-$version-Setup.exe" "dist/Prompt-Dock-$version-Setup.exe.blockmap" dist/latest.yml dist/SHA256SUMS.txt --draft --target $env:GITHUB_SHA --title "Prompt Dock $env:RELEASE_TAG · Windows" --notes-file dist/RELEASE-NOTES.md --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) { throw 'Release upload failed. The draft is not published.' }
+      - name: Publish verified release
+        shell: pwsh
+        run: |
+          gh release edit $env:RELEASE_TAG --draft=false --latest --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) { throw 'Publishing failed.' }

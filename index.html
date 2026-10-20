@@ -441,6 +441,12 @@
         <button type="button" id="importBtn" class="secondary">导入并合并</button>
       </div>
       <div id="importResult" class="import-result hidden"></div>
+      <section class="update-settings" aria-label="软件更新">
+        <div class="section-label">软件更新 <span id="updateCurrentVersion"></span></div>
+        <label class="check-row"><input id="updateAutoCheck" type="checkbox" checked><span><b>自动检查新版本</b><small>启动后及运行期间检查，只在你点击后下载和安装。</small></span></label>
+        <p id="updateSettingsStatus" class="hint" role="status">正在读取版本信息…</p>
+        <div class="update-buttons"><button type="button" id="updateCheckBtn" class="secondary">检查更新</button><button type="button" id="updateDetailsBtn" class="secondary">查看更新</button></div>
+      </section>
       <button type="button" id="authorBtn" class="about-author-entry">
         <span class="about-author-entry-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-info"></use></svg></span>
         <span><b>关于与作者</b><small>认识作者 · GitHub · 问题反馈</small></span>
@@ -509,7 +515,19 @@
     <button type="button" data-vocabulary-collection-action="rename" role="menuitem"><span><svg class="ui-icon"><use href="#icon-edit"></use></svg></span>重命名</button>
     <button type="button" data-vocabulary-collection-action="delete" class="context-menu-danger" role="menuitem"><span><svg class="ui-icon"><use href="#icon-trash"></use></svg></span>删除词库…</button>
   </div>
+  <aside id="updateBanner" class="update-banner hidden" aria-label="发现新版本" aria-live="polite">
+    <span id="updateBannerText"></span><button type="button" id="updateBannerView" class="secondary">查看更新</button><button type="button" id="updateBannerDismiss" class="icon-btn" aria-label="稍后提醒">×</button>
+  </aside>
+  <dialog id="updateDialog" class="update-dialog" aria-labelledby="updateHeading">
+    <div class="dialog-head"><div><h2 id="updateHeading">软件更新</h2><p id="updateVersionSummary"></p></div><button type="button" data-close-dialog="updateDialog" class="icon-btn" aria-label="关闭更新窗口">×</button></div>
+    <p id="updateMessage" class="hint" role="status"></p>
+    <progress id="updateProgress" max="100" value="0" class="hidden" aria-label="更新下载进度"></progress>
+    <pre id="updateReleaseNotes" class="update-release-notes hidden"></pre>
+    <p class="field-hint">重启安装前自动备份 Prompt、图片和词库。未设置备份目录时，会保存在本机资料目录的 update-backups 文件夹。</p>
+    <div class="dialog-actions update-buttons"><button type="button" id="updateManualBtn" class="secondary">前往下载页面</button><button type="button" id="updateLaterBtn" class="secondary">稍后再说</button><button type="button" id="updateActionBtn" class="primary">检查更新</button></div>
+  </dialog>
   <div id="toast" class="toast" popover="manual"></div>
   <script src="renderer.js"></script>
+  <script src="update-renderer.js"></script>
 </body>
 </html>

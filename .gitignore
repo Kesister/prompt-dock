@@ -6,6 +6,9 @@
 !/package-lock.json
 !/main.js
 !/author-links.js
+!/update-controller.js
+!/update-renderer.js
+!/.github/
 !/preload.js
 !/renderer.js
 !/storage.js
