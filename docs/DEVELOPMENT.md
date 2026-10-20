@@ -67,7 +67,7 @@ npm run dist
 
 ## macOS
 
-适配分支为 [`mac-support`](https://github.com/Kesister/prompt-dock/tree/mac-support)。不要用 Windows 文件整份覆盖该分支；Windows 原生助手不能在 macOS 运行。参阅 [Mac 交接与验证清单](../MAC-HANDOFF.md)。
+适配分支为 [`mac-support`](https://github.com/Kesister/prompt-dock/tree/mac-support)。两端共享源码，系统集成使用平台分支；Windows 原生助手仅用于 Windows。构建和测试见 [macOS 开发指南](../MAC-HANDOFF.md)，安装与权限设置见 [Mac 使用说明](MAC-USER-GUIDE.md)。
 
 ## 发布检查
 

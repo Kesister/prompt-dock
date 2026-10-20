@@ -4,8 +4,6 @@
 
 # Prompt Dock
 
-> macOS v0.11.1（Apple Silicon）已完成本机验收，提供[完整 Mac 安装包](https://github.com/Kesister/prompt-dock/releases/tag/mac-v0.11.1)。包含直接填入修复与快捷浮窗提速；当前为未做 Developer ID 签名及公证的预览版。详细验证见 [Mac 验证说明](docs/MAC-VALIDATION.md)。
-
 **把好用的 Prompt 留下来，需要时，随手取用。**
 
 一个本地优先的 Prompt 管理与快捷调用工具。<br>
@@ -31,17 +29,17 @@ https://github.com/user-attachments/assets/b3273881-3a8d-404b-804e-53ecfa3514eb
 
 **普通用户请前往 [Releases 下载 Windows 安装包](https://github.com/Kesister/prompt-dock/releases/latest)，选择 `Prompt-Dock-版本号-Setup.exe`。**
 
-Mac 用户请在 [Mac 下载页](https://github.com/Kesister/prompt-dock/releases/tag/mac-v0.11.1)选择 `Prompt-Dock-0.11.1-Mac-arm64-Hotkey-Fix.pkg`。先退出旧版，再安装到「应用程序」；已有资料保留。首次使用按应用设置提示授予辅助功能权限，新构建可能需要重新确认授权。
+Mac 用户请前往 [Mac 下载页](https://github.com/Kesister/prompt-dock/releases/tag/mac-v0.11.1)，下载 `.pkg` 安装包。支持 M 系列芯片、macOS 12 及以上版本。安装和权限设置见 [Mac 使用说明](docs/MAC-USER-GUIDE.md)。
 
 | 平台 | 当前状态 |
 | --- | --- |
 | Windows x64 | v0.11.1 安装版，提供安装向导、桌面快捷方式和内置更新 |
-| macOS Apple Silicon | v0.11.1 完整 PKG，macOS 12+；未做 Developer ID 签名及公证，内置自动安装更新暂不可用。源码位于 [`mac-support` 分支](https://github.com/Kesister/prompt-dock/tree/mac-support) |
+| macOS Apple Silicon | v0.11.1 预览版，提供完整安装包；支持 macOS 12+，需手动下载更新 |
 | Linux | 暂未提供发行包 |
 
 - `Source code (zip / tar.gz)` 是源码，**不是安装程序**；Notion Skill 的 ZIP 也不是软件安装包。
-- **更新软件：** v0.11.1 起可在设置中检查更新、下载新版并重启安装；安装前会自动备份资料。旧版用户首次升级仍需下载新安装包覆盖安装。[详细步骤](docs/USER-GUIDE.md#更新软件)
-- 当前 Windows 安装包未做代码签名，系统可能显示来源或信誉提示。请确认下载自本仓库，并核对 Release 中的 SHA-256；不要为安装软件关闭系统安全防护。
+- **Windows 更新：** v0.11.1 起可在设置中检查更新、下载新版并重启安装；安装前会自动备份资料。旧版用户首次升级仍需下载新安装包覆盖安装。[详细步骤](docs/USER-GUIDE.md#更新软件)
+- 当前 Windows 安装包未做代码签名；Mac 安装包尚未完成 Apple 开发者签名与公证，系统可能提示来源限制。请确认下载自本仓库，按需使用附件中的校验文件核对下载内容。
 
 ## 快速开始
 
@@ -108,6 +106,6 @@ Mac 对应快捷键：主窗口 `⌘⌥P`，搜索 `⌘K`，新建 `⌘N`，快�
 - **不方便使用 GitHub：** [问题反馈表单](https://kersss.notion.site/5cc968f36d944b1ab59abe70202e5147?source=copy_link)
 - **开发与贡献：** [开发指南](docs/DEVELOPMENT.md) · [贡献说明](CONTRIBUTING.md) · [更新记录](docs/CHANGELOG.md)
 
-反馈时请附上软件版本、Windows 版本、复现步骤和预期结果；截图前遮挡私人内容。可以在「关于与作者」中复制不含库内容的版本与环境信息。
+反馈时请附上软件版本、操作系统版本、复现步骤和预期结果；截图前遮挡私人内容。可以在「关于与作者」中复制不含库内容的版本与环境信息。
 
 由 [皮 / Kesister](https://github.com/Kesister) 持续打磨。少一点重复，多一点创造。
