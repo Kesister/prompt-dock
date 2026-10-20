@@ -1,7 +1,7 @@
 // Fixed, user-approved destinations. The renderer passes an ID, never a URL.
 const AUTHOR_LINKS = Object.freeze({
   github: "https://github.com/Kesister",
-  feedback: "https://wood-stream-c25.notion.site/5cc968f36d944b1ab59abe70202e5147?pvs=105"
+  feedback: "https://kersss.notion.site/5cc968f36d944b1ab59abe70202e5147?source=copy_link"
 });
 
 function resolveAuthorLink(id) {
