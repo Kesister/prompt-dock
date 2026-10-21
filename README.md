@@ -9,7 +9,7 @@
 一个本地优先的 Prompt 管理与快捷调用工具。<br>
 文字、变体、参考图片和常用关键词，在一个桌面空间里整理。
 
-[下载 Windows 版](https://github.com/Kesister/prompt-dock/releases/latest) · [下载 Mac 版](https://github.com/Kesister/prompt-dock/releases/tag/mac-v0.11.1) · [视频演示](#演示) · [快速开始](#快速开始) · [使用指南](docs/USER-GUIDE.md) · [反馈问题](https://github.com/Kesister/prompt-dock/issues)
+[下载 Windows 版](https://github.com/Kesister/prompt-dock/releases/latest) · [下载 Mac 版](https://github.com/Kesister/prompt-dock/releases/tag/mac-v0.11.2) · [视频演示](#演示) · [快速开始](#快速开始) · [使用指南](docs/USER-GUIDE.md) · [反馈问题](https://github.com/Kesister/prompt-dock/issues)
 
 </div>
 
@@ -29,13 +29,15 @@ https://github.com/user-attachments/assets/b3273881-3a8d-404b-804e-53ecfa3514eb
 
 **普通用户请前往 [Releases 下载 Windows 安装包](https://github.com/Kesister/prompt-dock/releases/latest)，选择 `Prompt-Dock-版本号-Setup.exe`。**
 
-Mac 用户请前往 [Mac 下载页](https://github.com/Kesister/prompt-dock/releases/tag/mac-v0.11.1)，下载 `.pkg` 安装包。支持 M 系列芯片、macOS 12 及以上版本。安装和权限设置见 [Mac 使用说明](docs/MAC-USER-GUIDE.md)。
+Mac 用户请前往 [Mac 下载页](https://github.com/Kesister/prompt-dock/releases/tag/mac-v0.11.2)，下载 `.pkg` 安装包。支持 M 系列芯片、macOS 12 及以上版本。安装和权限设置见 [Mac 使用说明](docs/MAC-USER-GUIDE.md)。
 
 | 平台 | 当前状态 |
 | --- | --- |
 | Windows x64 | v0.11.1 安装版，提供安装向导、桌面快捷方式和内置更新 |
-| macOS Apple Silicon | v0.11.1 预览版，提供完整安装包；支持 macOS 12+，需手动下载更新 |
+| macOS Apple Silicon | v0.11.2 预览版，提供完整安装包；支持 macOS 12+，需手动下载更新 |
 | Linux | 暂未提供发行包 |
+
+Windows 与 Mac 共用源码，按平台独立发布修复版本；两端版本号可能不同。
 
 - `Source code (zip / tar.gz)` 是源码，**不是安装程序**；Notion Skill 的 ZIP 也不是软件安装包。
 - **Windows 更新：** v0.11.1 起可在设置中检查更新、下载新版并重启安装；安装前会自动备份资料。旧版用户首次升级仍需下载新安装包覆盖安装。[详细步骤](docs/USER-GUIDE.md#更新软件)

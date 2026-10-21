@@ -19,6 +19,7 @@ class MacInput {
         const line = buffer.slice(0, end); buffer = buffer.slice(end + 1);
         try {
           const reply = JSON.parse(line);
+          if (reply.type === 'diagnostic' && process.env.PROMPT_DOCK_NATIVE_TEST) console.log('MAC_DIAGNOSTIC:', reply);
           if (reply.type === 'ready') {
             this.markReady(true);
             // A delayed first launch may outlive the initial readiness timer.
@@ -59,7 +60,7 @@ class MacInput {
   }
   capture() { return this.request('capture', {}, 200); }
   permissionStatus() { return this.request('permission'); }
-  paste(token) { return this.request('paste', { token }); }
+  paste(token) { return this.request('paste', { token }, 4000); }
   restore(token) { return this.request('restore', { token }); }
   dispose() { this.child.kill(); }
 }

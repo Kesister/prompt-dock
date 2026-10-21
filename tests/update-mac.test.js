@@ -8,7 +8,7 @@ const http = require('node:http');
 const { createHash } = require('node:crypto');
 const Module = require('node:module');
 const AdmZip = require('adm-zip');
-const { macReleaseAsset } = require('../mac-update');
+const { macReleaseAsset, latestMacRelease, MacReleaseUpdater, MAC_INSTALL_MESSAGE } = require('../mac-update');
 const { UpdateController } = require('../update-controller');
 const { NodeHttpExecutor } = require('builder-util/out/nodeHttpExecutor');
 const { configureRequestUrl, configureRequestOptions } = require('builder-util-runtime');
@@ -23,6 +23,65 @@ test('Mac manual downloads select only a matching stable DMG in the fixed reposi
   }
   assert.equal(macReleaseAsset(release, 'arm64', '0.12.0'), null);
   assert.equal(macReleaseAsset({ ...release, assets: [{ ...release.assets[2], browser_download_url: 'https://example.com/mac.dmg' }] }, 'arm64', '0.11.1'), null);
+});
+
+function macRelease(version, extra = {}) {
+  const tag_name = `mac-v${version}`;
+  const name = `Prompt-Dock-${version}-mac-arm64.pkg`;
+  return { tag_name, prerelease: true, body: `Mac ${version}`, assets: [{ name,
+    browser_download_url: `https://github.com/Kesister/prompt-dock/releases/download/${tag_name}/${name}` }], ...extra };
+}
+function response(releases, next = false) {
+  return { ok: true, json: async () => releases, headers: new Headers(next ? { link: '<https://api.github.com/next>; rel="next"' } : {}) };
+}
+
+test('Mac channel prefers matching PKG and accepts published Mac previews only', () => {
+  const release = macRelease('0.11.2');
+  const dmg = { name: 'Prompt-Dock-0.11.2-mac-arm64.dmg', browser_download_url: 'https://github.com/Kesister/prompt-dock/releases/download/mac-v0.11.2/Prompt-Dock-0.11.2-mac-arm64.dmg' };
+  assert.equal(macReleaseAsset({ ...release, assets: [dmg, ...release.assets] }, 'arm64', '0.11.2'), release.assets[0]);
+  assert.equal(macReleaseAsset(release, 'x64', '0.11.1'), null);
+  for (const invalid of [
+    { ...release, draft: true }, macRelease('0.11.3-beta.1'),
+    { ...release, assets: [{ ...release.assets[0], browser_download_url: 'https://example.com/installer.pkg' }] },
+    { ...release, tag_name: 'notion-skill-v0.11.2' },
+    { ...release, assets: undefined }
+  ]) assert.equal(macReleaseAsset(invalid, 'arm64', '0.11.1'), null);
+});
+
+test('Mac update discovery paginates and sorts versions independently of Windows and publication order', async () => {
+  const pages = [
+    [macRelease('0.11.1'), { tag_name: 'v9.0.0', assets: [{ name: 'Prompt-Dock-9.0.0-Setup.exe' }] }, macRelease('0.12.0', { draft: true })],
+    [macRelease('0.11.3'), macRelease('0.11.2'), macRelease('1.0.0', { assets: [] })]
+  ];
+  const urls = [];
+  const found = await latestMacRelease(async url => { urls.push(url); return response(pages[urls.length - 1], urls.length === 1); }, 'arm64', '0.11.1');
+  assert.equal(found.version, '0.11.3');
+  assert.equal(urls.length, 2);
+  assert.match(urls[1], /releases\?per_page=100&page=2$/);
+  assert.equal(await latestMacRelease(async () => response([macRelease('0.11.1')]), 'arm64', '0.11.2'), null);
+});
+
+test('Mac version checks use the shared UI without automatic installation or Windows feed requests', async () => {
+  let failed = true, requests = 0, backup = false;
+  const updater = new MacReleaseUpdater({ arch: 'arm64', currentVersion: '0.11.1', fetch: async url => {
+    requests++;
+    assert.match(url, /\/releases\?per_page=/);
+    return failed ? { ok: false } : response([macRelease('0.11.2')]);
+  } });
+  const controller = new UpdateController({ updater, currentVersion: '0.11.1', canInstall: false,
+    installMessage: MAC_INSTALL_MESSAGE, backup: async () => { backup = true; } });
+  await controller.check(); assert.equal(controller.snapshot().phase, 'error');
+  failed = false;
+  await controller.check();
+  assert.equal(controller.snapshot().phase, 'available');
+  assert.equal(controller.snapshot().version, '0.11.2');
+  assert.equal(controller.snapshot().notes, 'Mac 0.11.2');
+  await controller.download(); await controller.install();
+  assert.equal(backup, false); assert.equal(requests, 2);
+  assert.equal(controller.snapshot().phase, 'available');
+  const current = new UpdateController({ updater: new MacReleaseUpdater({ arch: 'arm64', currentVersion: '0.11.2', fetch: async () => response([macRelease('0.11.2')]) }), currentVersion: '0.11.2', canInstall: false });
+  await current.check(); assert.equal(current.snapshot().phase, 'current');
+  await assert.rejects(latestMacRelease(async () => response({}), 'arm64', '0.11.2'), /Invalid/);
 });
 
 class TestHttpExecutor extends NodeHttpExecutor {

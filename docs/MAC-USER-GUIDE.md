@@ -1,6 +1,6 @@
 # Mac 使用说明
 
-[返回首页](../README.md) · [下载 Mac 版](https://github.com/Kesister/prompt-dock/releases/tag/mac-v0.11.1)
+[返回首页](../README.md) · [下载 Mac 版](https://github.com/Kesister/prompt-dock/releases/tag/mac-v0.11.2)
 
 Prompt Dock Mac 版支持整理、搜索、预览和复用 Prompt，可保存正文、不同版本、参考图片和常用关键词。资料保存在本机，导出的 `.promptdock` 文件可在 Windows 与 Mac 之间迁移。
 
@@ -13,7 +13,7 @@ Prompt Dock Mac 版支持整理、搜索、预览和复用 Prompt，可保存正
 3. 双击安装包，按提示安装到「应用程序」。
 4. 在「应用程序」中打开 Prompt Dock。
 
-覆盖安装保留已有资料。Mac 版目前需要从下载页手动更新，暂不支持在软件内自动安装新版。
+覆盖安装保留已有资料。从 v0.11.2 起，可在设置中检查 Mac 版更新并打开对应安装包下载。下载完成后手动覆盖安装，暂不支持自动安装新版。v0.11.1 用户请通过本页下载链接升级。
 
 当前 Mac 安装包尚未完成 Apple 开发者签名与公证，系统可能提示来源限制。
 

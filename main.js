@@ -4,7 +4,7 @@ const path = require("path");
 const { pathToFileURL } = require("url");
 const { spawn } = require("child_process");
 const { MacInput, pasteMessage } = require("./mac-input");
-const { signingStatus, macReleaseAsset } = require('./mac-update');
+const { latestMacRelease, MacReleaseUpdater, MAC_INSTALL_MESSAGE } = require('./mac-update');
 const { createHash, randomUUID } = require("crypto");
 const AdmZip = require("adm-zip");
 const { IMAGE_SCHEME, PromptStorage, decodeDataImage, parseAssetUrl } = require("./storage");
@@ -468,14 +468,14 @@ function initializeUpdates() {
     updatePreferences.autoCheck = saved.autoCheck !== false;
   } catch {}
   const enabled = ['win32', 'darwin'].includes(process.platform) && app.isPackaged && !SMOKE_TEST;
-  const signing = IS_MAC && enabled ? signingStatus(process.execPath) : { signed: true, message: '' };
   updateController = new UpdateController({
-    updater: enabled ? require('electron-updater').autoUpdater : null,
+    updater: !enabled ? null : IS_MAC
+      ? new MacReleaseUpdater({ fetch: (...args) => net.fetch(...args), arch: process.arch, currentVersion: app.getVersion() })
+      : require('electron-updater').autoUpdater,
     enabled,
     currentVersion: app.getVersion(),
-    canInstall: enabled && !process.env.PORTABLE_EXECUTABLE_FILE && signing.signed,
-    installMessage: signing.message,
-    acceptUpdate: info => !IS_MAC || info.files?.some(file => new RegExp(`mac-(?:${process.arch}|universal)\\.zip$`, 'i').test(file.url)),
+    canInstall: enabled && !IS_MAC && !process.env.PORTABLE_EXECUTABLE_FILE,
+    installMessage: IS_MAC ? MAC_INSTALL_MESSAGE : '',
     backup: createUpdateBackup,
     prepareQuit: () => { app.isQuitting = true; },
     cancelQuit: () => { app.isQuitting = false; }
@@ -1966,7 +1966,7 @@ async function simulatePasteShortcut() {
       });
       if (choice.response === 0) await openMacAccessibility();
     }
-    return { ok: result.ok, message: result.ok ? '' : pasteMessage(result.reason) };
+    return { ok: result.ok, reason: result.reason, message: result.ok ? '' : pasteMessage(result.reason) };
   }
   if (process.platform !== "win32") {
     return { ok: false, message: "当前系统暂不支持模拟粘贴" };
@@ -2045,8 +2045,16 @@ app.whenReady().then(async () => {
     mainWindow.webContents.once("did-finish-load", async () => {
       const output = path.join(testProfile, "native-pasted.txt");
       const scenario = process.env.PROMPT_DOCK_NATIVE_SCENARIO || 'normal';
+      let captureResult, commitResult;
+      const capture = macHelper.capture.bind(macHelper), commit = macHelper.paste.bind(macHelper);
+      macHelper.capture = async (...args) => (captureResult = await capture(...args));
+      macHelper.paste = async (...args) => (commitResult = await commit(...args));
       const target = spawn(process.env.PROMPT_DOCK_NATIVE_TEST, [output, scenario], { stdio: ['ignore', 'ignore', 'inherit'] });
       for (let attempt = 0; attempt < 60 && !fs.existsSync(`${output}.ready`); attempt++) await new Promise(resolve => setTimeout(resolve, 100));
+      if (!fs.existsSync(`${output}.ready`)) {
+        fs.writeFileSync(path.join(testProfile, 'native-result.json'), JSON.stringify({ scenario, passed: false, message: 'Receiver did not become ready' }));
+        target.kill(); app.quit(); return;
+      }
       const expected = "Prompt Dock 原生粘贴测试 — isolated 123";
       let paste;
       if (scenario.startsWith('palette')) {
@@ -2059,15 +2067,40 @@ app.whenReady().then(async () => {
         const acquired = slashController.view && !slashController.view.copyOnly;
         if (slashController.view) slashController.action({ type: 'choose', session: slashController.view.session, id: data.prompts[0].id, variant: 'native-variant' });
         paste = { ok: acquired };
+      } else if (scenario.startsWith('compact')) {
+        // Exercise the same always-on-top variant popover used by the UI.
+        const data = readState();
+        data.settings.compactMode = true;
+        data.settings.alwaysOnTop = true;
+        data.prompts[0].variants = [{ id: 'native-variant', title: '测试版本', content: expected }];
+        writeState(data);
+        setCompactMode(true);
+        mainWindow.setAlwaysOnTop(true, 'floating');
+        revealLauncher();
+        await new Promise(resolve => setTimeout(resolve, 300));
+        await mainWindow.webContents.executeJavaScript(`(async () => {
+          state = await window.promptDock.getState();
+          selectedId = state.prompts[0].id;
+          renderAll();
+          showVariantPopover(document.querySelector('.prompt-card'), selectedId);
+          document.querySelector('#variantPopover [data-variant-id="native-variant"]').click();
+        })()`);
+        paste = { via: 'compact-variant-popover' };
       } else {
         revealLauncher();
         await new Promise(resolve => setTimeout(resolve, 300));
         clipboard.writeText(expected);
         paste = await simulatePasteShortcut();
       }
-      for (let attempt = 0; attempt < (['password','read-only'].includes(scenario) ? 5 : 50) && !fs.existsSync(output); attempt++) await new Promise(resolve => setTimeout(resolve, 100));
+      const protectedReason = scenario.includes('password') ? 'password' : scenario.includes('read-only') ? 'read-only' : null;
+      for (let attempt = 0; attempt < 50 && !fs.existsSync(output); attempt++) {
+        if (protectedReason && (commitResult || captureResult?.reason === protectedReason)) break;
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      if (scenario.startsWith('palette')) paste = commitResult || captureResult || paste;
       const received = fs.existsSync(output) && fs.readFileSync(output, "utf8") === expected;
-      const passed = ['password','read-only'].includes(scenario) ? !paste.ok && !fs.existsSync(output) && clipboard.readText() === expected : received;
+      const passed = protectedReason ? !paste.ok && paste.reason === protectedReason && !fs.existsSync(output)
+        && (scenario.startsWith('palette') || clipboard.readText() === expected) : received;
       const permission = await macHelper.permissionStatus();
       fs.writeFileSync(path.join(testProfile, "native-result.json"), JSON.stringify({ scenario, paste, passed, received, accessibilityTrusted: permission.trusted === true }));
       console.log("NATIVE_TEST:", { paste, passed });
@@ -2128,11 +2161,9 @@ for (const [channel, action] of Object.entries({
   'update:open-release': async () => {
     if (!SMOKE_TEST && IS_MAC) {
       try {
-        const response = await net.fetch('https://api.github.com/repos/Kesister/prompt-dock/releases/latest', { signal: AbortSignal.timeout(15000), headers: { Accept: 'application/vnd.github+json' } });
-        if (!response.ok) throw new Error('release');
-        const asset = macReleaseAsset(await response.json(), process.arch, app.getVersion());
-        if (!asset) return { ok: false, message: '当前正式发行版还没有适合这台 Mac 的安装包。请继续使用本地版本，等待 Mac 版发布。' };
-        await shell.openExternal(asset.browser_download_url);
+        const release = await latestMacRelease((...args) => net.fetch(...args), process.arch, app.getVersion());
+        if (!release) return { ok: false, message: '暂未找到适合这台 Mac 的新版安装包，请稍后再检查。' };
+        await shell.openExternal(release.asset.browser_download_url);
       } catch { return { ok: false, message: '暂时无法检查 Mac 下载，请稍后重试。' }; }
     } else if (!SMOKE_TEST) await shell.openExternal(RELEASE_URL);
     return { ok: true };

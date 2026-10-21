@@ -10,7 +10,13 @@ struct Snapshot {
     let value: String?
     let point: CGPoint
 }
-var captured: (String, Snapshot)?
+struct CapturedTarget {
+    let app: NSRunningApplication
+    let window: AXUIElement?
+    let snapshot: Snapshot?
+}
+var captured: (String, CapturedTarget)?
+var accessibilityRequests: [pid_t: (app: NSRunningApplication, time: TimeInterval, supported: Bool)] = [:]
 
 // Bound every remote AX message, as well as the entire snapshot. A stalled
 // application must not block hotkey presentation or leave commands queued.
@@ -45,6 +51,45 @@ func focused(_ app: NSRunningApplication, _ reader: AXReader) -> AXUIElement? {
     guard let value = reader.attribute(AXUIElementCreateApplication(app.processIdentifier), kAXFocusedUIElementAttribute),
           CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
     return (value as! AXUIElement)
+}
+func focusedWindow(_ app: NSRunningApplication, budget: TimeInterval = 0.04) -> AXUIElement? {
+    let reader = AXReader(budget: budget)
+    guard let value = reader.attribute(AXUIElementCreateApplication(app.processIdentifier), kAXFocusedWindowAttribute),
+          CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+    return (value as! AXUIElement)
+}
+func prepareAccessibility(_ app: NSRunningApplication) {
+    guard AXIsProcessTrusted() else { return }
+    let pid = app.processIdentifier
+    if let previous = accessibilityRequests[pid], !previous.app.isTerminated { return }
+    // Electron documents AXManualAccessibility; Chrome uses AXEnhancedUserInterface.
+    // Chromium debounces this request for two seconds. Reissuing it on every
+    // activation restarts that delay, so request once per running application.
+    // https://www.electronjs.org/docs/latest/tutorial/accessibility
+    let reader = AXReader(budget: 0.04)
+    let application = AXUIElementCreateApplication(pid)
+    // Reading the application role also activates Chromium's native AX APIs.
+    _ = reader.attribute(application, kAXRoleAttribute)
+    guard reader.prepare(application) else { return }
+    let manual = AXUIElementSetAttributeValue(application, "AXManualAccessibility" as CFString, true as CFTypeRef)
+    var enhanced = AXError.attributeUnsupported
+    if manual != .success && reader.prepare(application) {
+        enhanced = AXUIElementSetAttributeValue(application, "AXEnhancedUserInterface" as CFString, true as CFTypeRef)
+    }
+    // A busy launch is transient; do not cache it as unsupported for the whole
+    // app lifetime. Capture/paste can retry once the app is responsive.
+    if manual == .cannotComplete || enhanced == .cannotComplete { return }
+    // Chromium may process EnhancedUserInterface before its superclass returns
+    // notImplemented. Other apps simply reject these optional attributes.
+    accessibilityRequests[pid] = (app, ProcessInfo.processInfo.systemUptime,
+        manual == .success || enhanced == .success || enhanced == .notImplemented)
+    if ProcessInfo.processInfo.environment["PROMPT_DOCK_NATIVE_TEST"] != nil {
+        reply(0, ["type": "diagnostic", "app": app.bundleIdentifier ?? "", "pid": pid, "manual": manual.rawValue, "enhanced": enhanced.rawValue])
+    }
+}
+func accessibilityStarting(_ app: NSRunningApplication) -> Bool {
+    guard let request = accessibilityRequests[app.processIdentifier] else { return false }
+    return request.supported && ProcessInfo.processInfo.systemUptime - request.time < 3
 }
 func snapshot(_ app: NSRunningApplication?, budget: TimeInterval = 0.5) -> (Snapshot?, String) {
     guard AXIsProcessTrusted() else { return (nil, "permission") }
@@ -84,6 +129,7 @@ func remember(_ app: NSRunningApplication?) {
           app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
           app.activationPolicy == .regular else { return }
     target = app
+    prepareAccessibility(app)
 }
 remember(NSWorkspace.shared.frontmostApplication)
 let activated = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { note in
@@ -94,6 +140,9 @@ func reply(_ request: Any, _ data: [String: Any]) {
     if ProcessInfo.processInfo.environment["PROMPT_DOCK_NATIVE_TEST"] != nil && data["ok"] as? Bool == false {
         result["targetApp"] = target?.bundleIdentifier ?? "none"
         result["targetExists"] = target != nil
+        result["frontApp"] = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "none"
+        result["frontPid"] = NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0
+        result["targetPid"] = target?.processIdentifier ?? 0
         let reader = AXReader(budget: 0.02)
         if let app = target, let field = focused(app, reader) { result["role"] = reader.attribute(field, kAXRoleAttribute) as? String ?? "none" }
     }
@@ -117,16 +166,31 @@ DispatchQueue.global().async {
                 reply(request, ["ok": true]); return
             }
             if type == "capture" {
-                let (fresh, reason) = snapshot(target, budget: 0.15)
-                guard let item = fresh else { captured = nil; reply(request, ["ok": false, "reason": reason]); return }
+                // An app may have been busy during its activation notification.
+                // Retry that short initialization before the first hotkey capture.
+                if let app = target { prepareAccessibility(app) }
+                let (fresh, reason) = snapshot(target, budget: 0.1)
+                let item: CapturedTarget
+                if let fresh = fresh {
+                    item = CapturedTarget(app: fresh.app, window: nil, snapshot: fresh)
+                } else if reason == "caret-unavailable", let app = target,
+                          NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier,
+                          accessibilityStarting(app), let window = focusedWindow(app) {
+                    // The first Chromium tree may still be starting. Bind this
+                    // session to its app/window now and verify the editable field
+                    // after returning there. Never hold up popup presentation.
+                    item = CapturedTarget(app: app, window: window, snapshot: nil)
+                } else { captured = nil; reply(request, ["ok": false, "reason": reason]); return }
                 let token = UUID().uuidString
                 captured = (token, item)
-                reply(request, ["ok": true, "token": token, "x": item.point.x, "y": item.point.y])
+                var result: [String: Any] = ["ok": true, "token": token, "deferred": item.snapshot == nil]
+                if let point = fresh?.point { result["x"] = point.x; result["y"] = point.y }
+                reply(request, result)
                 return
             }
             guard type == "paste" else { reply(request, ["ok": false, "reason": "invalid-command"]); return }
             guard AXIsProcessTrusted() else { reply(request, ["ok": false, "reason": "permission"]); return }
-            let item: Snapshot?
+            let item: CapturedTarget?
             let explicitTarget = command["token"] as? String
             if let token = command["token"] as? String {
                 item = captured?.0 == token ? captured?.1 : nil
@@ -134,30 +198,50 @@ DispatchQueue.global().async {
             } else { item = nil }
             guard explicitTarget == nil || item != nil else { reply(request, ["ok": false, "reason": "target-changed"]); return }
             guard let destination = item?.app ?? target, !destination.isTerminated else { reply(request, ["ok": false, "reason": "caret-unavailable"]); return }
-            // Browsers may stop exposing their focused field/selection while inactive.
-            // Main-window clicks resolve the live field after activation. Palette tokens
-            // still require the exact pre-popup field, selection and content.
+            if item != nil, let front = NSWorkspace.shared.frontmostApplication,
+               front.processIdentifier != owner && front.processIdentifier != destination.processIdentifier {
+                reply(request, ["ok": false, "reason": "target-changed"]); return
+            }
+            prepareAccessibility(destination)
             guard destination.activate(options: [.activateIgnoringOtherApps]) else { reply(request, ["ok": false, "reason": "target-changed"]); return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                let (current, failure) = snapshot(destination)
-                guard let current = current else { reply(request, ["ok": false, "reason": failure]); return }
-                let expected = item ?? current
+            let deadline = ProcessInfo.processInfo.systemUptime + 3
+            let clipboardChange = NSPasteboard.general.changeCount
+            func attemptPaste() {
+                guard !destination.isTerminated,
+                      NSWorkspace.shared.frontmostApplication?.processIdentifier == destination.processIdentifier else {
+                    reply(request, ["ok": false, "reason": "target-changed"]); return
+                }
+                if let expectedWindow = item?.window {
+                    guard let window = focusedWindow(destination), CFEqual(window, expectedWindow) else {
+                        reply(request, ["ok": false, "reason": "target-changed"]); return
+                    }
+                }
+                let (current, failure) = snapshot(destination, budget: 0.15)
+                guard let current = current else {
+                    if ["caret-unavailable", "timeout"].contains(failure), ProcessInfo.processInfo.systemUptime < deadline {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: attemptPaste)
+                    } else { reply(request, ["ok": false, "reason": failure]) }
+                    return
+                }
+                let expected = item?.snapshot ?? current
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                  let (verified, failure) = snapshot(destination)
-                  guard let verified = verified else { reply(request, ["ok": false, "reason": failure]); return }
-                  guard NSWorkspace.shared.frontmostApplication?.processIdentifier == destination.processIdentifier,
-                        CFEqual(verified.element, expected.element), verified.range.location == expected.range.location,
-                        verified.range.length == expected.range.length, verified.value == expected.value else {
-                      reply(request, ["ok": false, "reason": "target-changed"]); return
-                  }
-                guard let source = CGEventSource(stateID: .hidSystemState),
-                      let down = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
-                      let up = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else { reply(request, ["ok": false, "reason": "event-unavailable"]); return }
-                down.flags = .maskCommand; up.flags = .maskCommand
-                down.post(tap: .cghidEventTap); up.post(tap: .cghidEventTap)
-                reply(request, ["ok": true])
+                    let (verified, failure) = snapshot(destination)
+                    guard let verified = verified else { reply(request, ["ok": false, "reason": failure]); return }
+                    guard NSWorkspace.shared.frontmostApplication?.processIdentifier == destination.processIdentifier,
+                          NSPasteboard.general.changeCount == clipboardChange,
+                          CFEqual(verified.element, expected.element), verified.range.location == expected.range.location,
+                          verified.range.length == expected.range.length, verified.value == expected.value else {
+                        reply(request, ["ok": false, "reason": "target-changed"]); return
+                    }
+                    guard let source = CGEventSource(stateID: .hidSystemState),
+                        let down = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
+                        let up = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else { reply(request, ["ok": false, "reason": "event-unavailable"]); return }
+                    down.flags = .maskCommand; up.flags = .maskCommand
+                    down.post(tap: .cghidEventTap); up.post(tap: .cghidEventTap)
+                    reply(request, ["ok": true])
                 }
             }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: attemptPaste)
         }
     }
     exit(0)

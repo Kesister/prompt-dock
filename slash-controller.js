@@ -58,6 +58,7 @@ class SlashController {
     if(this.view){this.close();return;}
     this.acquiring=true;
     const acquired=await this.macInput?.capture() || {ok:false,reason:'helper-unavailable'};
+    if(process.env.PROMPT_DOCK_NATIVE_TEST)console.log('MAC_CAPTURE_RESULT:',acquired);
     this.acquiring=false;
     if(!this.config.enabled||this.paused)return;
     // Password fields are skipped completely; never show an insertion action there.
@@ -145,7 +146,7 @@ class SlashController {
     this.pending=true;this.chosen=value;this.view.busy=true;this.view.message="正在核对输入位置…";this.publish();
     if(this.view.palette)(IS_MAC?this.commitMacPalette(this.view.session):this.commitPalette(this.view.session));
     else this.send({type:"commit",session:this.view.session,query:this.view.query});
-    this.commitTimer=setTimeout(()=>{if(this.pending&&this.view){this.pending=false;this.view.busy=false;this.view.finished=true;this.view.copyOnly=true;this.view.message="输入框未响应，内容已复制，请手动粘贴。";this.send({type:"cancel"});this.publish();if(this.view.palette)this.reveal();}},IS_MAC?2600:1800);
+    this.commitTimer=setTimeout(()=>{if(this.pending&&this.view){this.pending=false;this.view.busy=false;this.view.finished=true;this.view.copyOnly=true;this.view.message="输入框未响应，内容已复制，请手动粘贴。";this.send({type:"cancel"});this.publish();if(this.view.palette)this.reveal();}},IS_MAC?4400:1800);
   }
   async commitMacPalette(session){
     if(IS_MAC){
