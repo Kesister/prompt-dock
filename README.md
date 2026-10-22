@@ -19,6 +19,8 @@
 
 无需注册账户，也无需配置 AI API。Prompt Dock **不是 AI 聊天客户端**，不会替你调用模型；它负责让你自己的内容更容易找到、复用。
 
+> **使用教程：** [点击查看完整教程](https://kesister.github.io/prompt-dock/)，包含操作演示、快捷键和常见问题。
+
 ## 演示
 
 https://github.com/user-attachments/assets/b3273881-3a8d-404b-804e-53ecfa3514eb
