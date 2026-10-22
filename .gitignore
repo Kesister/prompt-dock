@@ -23,6 +23,8 @@
 !/CONTRIBUTING.md
 !/docs/
 /docs/*
+!/docs/index.html
+!/docs/.nojekyll
 !/docs/USER-GUIDE.md
 !/docs/DEVELOPMENT.md
 !/docs/NOTION-SKILL.md
