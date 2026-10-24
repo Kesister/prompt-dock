@@ -834,6 +834,10 @@ function createWindow() {
           new Promise(resolve => setTimeout(resolve, 1200))
         ]);
       };
+      const waitForPaint = () => Promise.race([
+        new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Smoke renderer did not paint')), 1500))
+      ]);
       state.prompts[0].images = ${JSON.stringify(storedArchiveState.prompts[0].images)};
       state.prompts[0].imageThumbnails = ${JSON.stringify(storedArchiveState.prompts[0].imageThumbnails)};
       state.prompts[0].defaultVariantTitle = "通用版";
@@ -1054,7 +1058,8 @@ function createWindow() {
         && promptList.getBoundingClientRect().bottom <= window.innerHeight;
       renderAll();
       document.querySelector("#privacyModeBtn").click();
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await persistQueue;
+      await waitForPaint();
       const privacyModeMasksPromptText = document.body.classList.contains("privacy-mode")
         && parseFloat(getComputedStyle(document.querySelector(".prompt-card .card-body p")).height) <= 10
         && getComputedStyle(document.querySelector("#previewText")).color === "rgba(0, 0, 0, 0)"
@@ -1062,7 +1067,18 @@ function createWindow() {
       const privacyModePersists = (await window.promptDock.getState()).settings.privacyMode === true;
       state.settings.privacyHideImages = true;
       applyPrivacyMode();
-      const privacyModeCanHideImages = getComputedStyle(document.querySelector(".prompt-card .thumb img")).visibility === "hidden";
+      const privacyImage = document.querySelector(".prompt-card .thumb img");
+      privacyImage.closest('.prompt-card').scrollIntoView({ block: 'nearest' });
+      privacyImage.getBoundingClientRect();
+      await waitForPaint();
+      const privacyImageDiagnostic = {
+        enabled: state.settings.privacyMode,
+        hideImages: state.settings.privacyHideImages,
+        classes: document.body.className,
+        visibility: getComputedStyle(privacyImage).visibility
+      };
+      const privacyModeCanHideImages = privacyImageDiagnostic.enabled && privacyImageDiagnostic.hideImages
+        && privacyImageDiagnostic.visibility === "hidden";
       document.querySelector("#privacyModeBtn").click();
       await new Promise((resolve) => setTimeout(resolve, 100));
       state.settings.privacyHideImages = false;
@@ -1528,6 +1544,7 @@ function createWindow() {
         privacyModeMasksPromptText,
         privacyModePersists,
         privacyModeCanHideImages,
+        privacyImageDiagnostic,
         settingsPinnedInViewport,
         sidebarTagsScrollable,
         scrollbarRevealOnScroll,
