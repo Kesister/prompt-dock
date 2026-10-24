@@ -1,91 +1,51 @@
-name: Correct Windows v0.11.2 release
+name: Finalize Windows v0.11.2 correction
 on:
   push:
     branches: [main]
     paths: ['.github/workflows/correct-windows-v0112.yml']
 permissions:
   contents: write
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
 jobs:
-  correct:
+  publish:
     if: >-
       github.repository == 'Kesister/prompt-dock' &&
       github.ref == 'refs/heads/main' &&
-      startsWith(github.event.head_commit.message, 'fix: restore Windows v0.11.2 release [correct-0112-20261025]')
-    runs-on: windows-latest
+      startsWith(github.event.head_commit.message, 'fix: finish Windows v0.11.2 publication [finish-correct-0112-20261025]')
+    runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-      - name: Validate correction scope
-        shell: pwsh
+      - name: Verify the completed installer draft and publish
+        shell: python
         run: |
-          if ($env:GITHUB_REPOSITORY -ne 'Kesister/prompt-dock') { throw 'Unexpected repository.' }
-          if ((Get-Content package.json | ConvertFrom-Json).version -ne '0.11.2') { throw 'Unexpected version.' }
-          $expected = @(
-            @{ id = 422794521; tag = 'v0.11.2'; draft = $false; target = '8f520809be4816117b74b25dcb0ecea471c182cf' },
-            @{ id = 422806444; tag = 'v0.11.3'; draft = $false; target = '6753d80b2dce60342268dad15f7fab46d739b3f6' },
-            @{ id = 422785648; tag = ''; draft = $true; target = 'main' }
-          )
-          New-Item -ItemType Directory release-backup -Force | Out-Null
-          foreach ($item in $expected) {
-            $raw = gh api "repos/$env:GITHUB_REPOSITORY/releases/$($item.id)"
-            if ($LASTEXITCODE -ne 0) { throw 'Expected release is unavailable; no releases were changed.' }
-            $release = $raw | ConvertFrom-Json
-            if ($release.tag_name -ne $item.tag -or $release.draft -ne $item.draft -or $release.target_commitish -ne $item.target -or $release.name -notlike '*Windows') { throw 'Release identity changed; no releases were changed.' }
-            $raw | Set-Content "release-backup/release-$($item.id).json" -Encoding utf8
+          import os, json, urllib.request, urllib.error
+          base = 'https://api.github.com/repos/Kesister/prompt-dock'
+          headers = {'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json', 'X-GitHub-Api-Version': '2022-11-28'}
+          def api(path, method='GET', body=None):
+              request = urllib.request.Request(base + path, data=None if body is None else json.dumps(body).encode(), headers=headers, method=method)
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  return json.load(response)
+          release = api('/releases/422956384')
+          assert release['tag_name'] == 'v0.11.2' and release['draft'] is True and release['prerelease'] is False
+          assert release['target_commitish'] == 'e19ef5965591cdb006b7e252e91fff83d604d86a'
+          expected = {
+              'latest.yml': 'sha256:0ed01f8ad35c588182a9d87b0ac3aa6ade600229e5b69114068a63bc9b2baebb',
+              'Prompt-Dock-0.11.2-Setup.exe': 'sha256:63e69cc854aef3e6980c00827912d9c5a3b9468d25588c3fd227e78107f9afaf',
+              'Prompt-Dock-0.11.2-Setup.exe.blockmap': 'sha256:ed2711f2c08fb4da3cfd7c61571edbc9136aacc7fe48843c96cca6331dc1f7a3',
+              'SHA256SUMS.txt': 'sha256:87bfecf62ed088bf28950563a6bf62955398fd510f7b49bea9b62b5886981d37'
           }
-      - name: Install dependencies
-        run: npm ci
-      - name: Run regression tests
-        run: npm test
-      - name: Build Windows installer
-        run: npm run dist:installer
-      - name: Verify packaged application
-        shell: pwsh
-        run: node scripts/smoke-test.js "dist/win-unpacked/Prompt Dock.exe"
-      - name: Prepare installer checksums and public release notes
-        run: npm run release:prepare
-      - name: Back up the two previous Windows releases
-        shell: pwsh
-        run: |
-          foreach ($tag in @('v0.11.2', 'v0.11.3')) {
-            gh release download $tag --repo $env:GITHUB_REPOSITORY --dir "release-backup/$tag"
-            if ($LASTEXITCODE -ne 0) { throw 'Could not back up old release; no releases were changed.' }
-            $id = if ($tag -eq 'v0.11.2') { 422794521 } else { 422806444 }
-            $release = Get-Content "release-backup/release-$id.json" -Raw | ConvertFrom-Json
-            foreach ($asset in $release.assets) {
-              $actual = (Get-FileHash -LiteralPath "release-backup/$tag/$($asset.name)" -Algorithm SHA256).Hash.ToLowerInvariant()
-              if ("sha256:$actual" -ne $asset.digest) { throw 'Release backup checksum mismatch; no releases were changed.' }
-            }
-          }
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows-releases-before-version-correction
-          path: release-backup/
-          retention-days: 7
-      - name: Replace only the confirmed Windows releases
-        shell: pwsh
-        run: |
-          foreach ($tag in @('v0.11.3', 'v0.11.2')) {
-            gh release delete $tag --cleanup-tag --yes --repo $env:GITHUB_REPOSITORY
-            if ($LASTEXITCODE -ne 0) { throw "Could not remove $tag." }
-          }
-          gh api --method DELETE "repos/$env:GITHUB_REPOSITORY/releases/422785648"
-          if ($LASTEXITCODE -ne 0) { throw 'Could not remove the old unpublished Windows upload draft.' }
-          gh release create v0.11.2 dist/Prompt-Dock-0.11.2-Setup.exe dist/Prompt-Dock-0.11.2-Setup.exe.blockmap dist/latest.yml dist/SHA256SUMS.txt --draft --target $env:GITHUB_SHA --title 'Prompt Dock v0.11.2 · Windows' --notes-file dist/RELEASE-NOTES.md --repo $env:GITHUB_REPOSITORY
-          if ($LASTEXITCODE -ne 0) { throw 'Replacement upload failed; the release remains unpublished.' }
-          $release = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/v0.11.2" | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0 -or $release.assets.Count -ne 4) { throw 'Replacement assets are incomplete.' }
-          foreach ($asset in $release.assets) {
-            $actual = (Get-FileHash -LiteralPath "dist/$($asset.name)" -Algorithm SHA256).Hash.ToLowerInvariant()
-            if ($asset.state -ne 'uploaded' -or "sha256:$actual" -ne $asset.digest) { throw 'Replacement checksum mismatch.' }
-          }
-          gh release edit v0.11.2 --draft=false --prerelease=false --latest --repo $env:GITHUB_REPOSITORY
-          if ($LASTEXITCODE -ne 0) { throw 'Could not publish the verified replacement.' }
+          assert len(release['assets']) == 4
+          for asset in release['assets']:
+              assert asset['state'] == 'uploaded' and asset['digest'] == expected[asset['name']]
+          assert all(text not in release['body'] for text in ['交接', 'CI', '测试', '0.11.3'])
+          assert len(release['body']) < 1500
+          try:
+              api('/git/ref/tags/v0.11.3')
+          except urllib.error.HTTPError as error:
+              assert error.code == 404
+          else:
+              raise RuntimeError('The unwanted Windows tag still exists.')
+          result = api('/releases/422956384', 'PATCH', {'draft': False, 'prerelease': False, 'make_latest': 'true'})
+          assert result['draft'] is False and result['tag_name'] == 'v0.11.2'
+          assert api('/releases/latest')['id'] == 422956384
+          print('Published verified Windows v0.11.2: ' + result['html_url'])
