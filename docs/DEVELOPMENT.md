@@ -4,12 +4,13 @@
 
 ## 范围与结构
 
-`main` 当前为 Windows v0.11.1。项目使用 Electron、原生 JavaScript/CSS、本地 SQLite 与 Windows C# 输入助手。
+`main` 当前为 Windows v0.11.2。项目使用 Electron、原生 JavaScript/CSS、本地 SQLite 与 Windows C# 输入助手。
 
 | 位置 | 用途 |
 | --- | --- |
 | `main.js` / `preload.js` | 桌面窗口、IPC、快捷键与系统集成 |
 | `renderer.js` / `index.html` / `styles.css` | Prompt、词库和设置界面 |
+| `motion.js` / `motion.css` | 面板、菜单、弹窗和小窗内容过渡；在 renderer.js 之前加载脚本 |
 | `storage.js` | 本地库、图片存储与数据维护 |
 | `slash-*` / `slash.html` / `slash.css` | 快捷调用与预览；沿用历史文件名，不代表仍支持符号触发 |
 | `assets/PromptDock.*.cs` | Windows 原生输入及焦点助手 |
@@ -76,3 +77,4 @@ npm run dist
 3. 检查包内容，确认没有个人数据和意外资源。
 4. 为发布源码创建版本标签；在 Releases 上传安装包和 SHA-256，写明平台、已知限制及升级方法。
 5. 保持 README 的下载链接指向应用发行版，不把可选 Skill 的发布误当作软件更新。
+

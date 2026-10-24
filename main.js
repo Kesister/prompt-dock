@@ -10,6 +10,7 @@ const { SlashController } = require("./slash-controller");
 const slashCore = require("./slash-core");
 const { resolveAuthorLink, authorInfo } = require("./author-links");
 const { UpdateController, RELEASE_URL } = require("./update-controller");
+const { WindowTransition } = require("./window-transition");
 const os = require("os");
 const smokeAuthorLinks = [];
 
@@ -17,6 +18,8 @@ let mainWindow;
 let tray;
 let activeShortcut = "";
 let normalWindowBounds = null;
+let compactModeTask = null;
+let windowTransition;
 let pasteQueue = Promise.resolve();
 let storage;
 let slashController;
@@ -28,6 +31,7 @@ const MAX_PROMPT_IMAGES = 6;
 const MAX_SOURCE_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_IMAGE_EDGE = 1600;
 const SMOKE_TEST = process.env.PROMPT_DOCK_SMOKE_TEST === "1";
+const PREVIEW_PROFILE = require('./package.json').promptDockPreview === true;
 if (SMOKE_TEST) {
   app.disableHardwareAcceleration();
   app.setPath("userData", path.join(app.getPath("temp"), `prompt-dock-smoke-test-${app.getVersion()}-${process.pid}`));
@@ -35,6 +39,12 @@ if (SMOKE_TEST) {
     console.error(`SMOKE_FAIL:${error?.stack || error}`);
     app.exit(2);
   });
+}
+if (PREVIEW_PROFILE && !SMOKE_TEST) {
+  const directory = process.env.PORTABLE_EXECUTABLE_DIR || path.dirname(app.getPath('exe'));
+  const profile = path.join(directory, 'Prompt-Dock-motion-preview-data');
+  fs.mkdirSync(profile, { recursive: true });
+  app.setPath('userData', profile);
 }
 // Acquire the profile lock before opening storage or registering shortcuts.
 if (!app.requestSingleInstanceLock()) {
@@ -72,7 +82,7 @@ function initialState() {
       shortcut: DEFAULT_SHORTCUT,
       newPromptShortcut: "Control+N",
       slash: slashCore.settings(),
-      directPaste: true,
+      directPaste: !PREVIEW_PROFILE,
       launchAtLogin: false,
       alwaysOnTop: false,
       leftCollapsed: false,
@@ -428,7 +438,7 @@ function sendUpdateStatus() {
 
 function scheduleUpdateCheck() {
   clearTimeout(updateTimer);
-  if (SMOKE_TEST || !updatePreferences.autoCheck) return;
+  if (SMOKE_TEST || PREVIEW_PROFILE || !updatePreferences.autoCheck) return;
   updateTimer = setTimeout(async () => {
     await updateController.check();
     if (updatePreferences.autoCheck) {
@@ -444,7 +454,7 @@ function initializeUpdates() {
     const saved = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'update-preferences.json'), 'utf8'));
     updatePreferences.autoCheck = saved.autoCheck !== false;
   } catch {}
-  const enabled = process.platform === 'win32' && app.isPackaged && !SMOKE_TEST;
+  const enabled = process.platform === 'win32' && app.isPackaged && !SMOKE_TEST && !PREVIEW_PROFILE;
   updateController = new UpdateController({
     updater: enabled ? require('electron-updater').autoUpdater : null,
     enabled,
@@ -657,6 +667,7 @@ function createWindow() {
   const initialCompactWidth = Math.max(360, Number(savedCompactSize.width) || 420);
   const initialCompactHeight = Math.max(360, Number(savedCompactSize.height) || 520);
   mainWindow = new BrowserWindow({
+    title: PREVIEW_PROFILE ? 'Prompt Dock · 动画便携测试' : 'Prompt Dock',
     width: compactMode ? initialCompactWidth : 1080,
     height: compactMode ? initialCompactHeight : 700,
     minWidth: compactMode ? 360 : 840,
@@ -673,6 +684,8 @@ function createWindow() {
       nodeIntegration: false
     }
   });
+  windowTransition = new WindowTransition({ window: mainWindow, BrowserWindow, ipcMain });
+  if (PREVIEW_PROFILE) mainWindow.on('page-title-updated', event => event.preventDefault());
   mainWindow.loadFile("index.html");
   mainWindow.once("ready-to-show", () => {
     if (!SMOKE_TEST) mainWindow.show();
@@ -813,6 +826,12 @@ function createWindow() {
     setCompactMode(false);
     await new Promise((resolve) => setTimeout(resolve, 80));
     const result = await mainWindow.webContents.executeJavaScript(`(async () => {
+      const waitForVisual = async element => {
+        await Promise.race([
+          Promise.allSettled(element.getAnimations().map(animation => animation.finished)),
+          new Promise(resolve => setTimeout(resolve, 1200))
+        ]);
+      };
       state.prompts[0].images = ${JSON.stringify(storedArchiveState.prompts[0].images)};
       state.prompts[0].imageThumbnails = ${JSON.stringify(storedArchiveState.prompts[0].imageThumbnails)};
       state.prompts[0].defaultVariantTitle = "通用版";
@@ -905,6 +924,7 @@ function createWindow() {
       const lightboxImage = document.querySelector("#lightboxImage");
       if (!lightboxImage.complete) await new Promise((resolve) => lightboxImage.addEventListener("load", resolve, { once: true }));
       const lightboxImageActionsAvailable = Boolean(document.querySelector("#lightboxCopyImage") && document.querySelector("#lightboxSaveImage"));
+      await waitForVisual(document.querySelector("#imageLightbox"));
       const lightboxCopyRect = document.querySelector("#lightboxCopyImage").getBoundingClientRect();
       const lightboxCopyHitArea = lightboxCopyRect.width >= 100 && lightboxCopyRect.height >= 38;
       document.querySelector("#lightboxCopyImage").dispatchEvent(new PointerEvent("pointerdown", { button: 0, bubbles: true, cancelable: true }));
@@ -1207,6 +1227,7 @@ function createWindow() {
       document.querySelector("#authorBtn").click();
       await new Promise((resolve) => setTimeout(resolve, 120));
       const authorDialog = document.querySelector("#authorDialog");
+      await waitForVisual(authorDialog);
       const authorAvatar = document.querySelector("#authorAvatar");
       if (!authorAvatar.complete) await new Promise((resolve) => authorAvatar.addEventListener("load", resolve, { once: true }));
       const authorPageWorks = authorDialog.open
@@ -1252,8 +1273,13 @@ function createWindow() {
       const cacheClearResult = await window.promptDock.clearCache();
       const cacheMaintenanceWorks = cacheClearResult.ok === true && cacheClearResult.bytes === 0;
       document.querySelector('[data-close-dialog="settingsDialog"]').click();
+      const waitForCompactMode = async () => {
+        const deadline = performance.now() + 5000;
+        while (compactModeSwitching && performance.now() < deadline) await new Promise(resolve => setTimeout(resolve, 16));
+        if (compactModeSwitching) throw new Error('Compact mode did not settle');
+      };
       document.querySelector("#compactBtn").click();
-      await new Promise((resolve) => setTimeout(resolve, 220));
+      await waitForCompactMode();
       const compactEnabled = document.querySelector(".app-shell").classList.contains("compact-mode");
       const compactPaneResizersHidden = [...document.querySelectorAll(".pane-resizer")].every((handle) => getComputedStyle(handle).display === "none");
       document.querySelector("#toggleLeftBtn").click();
@@ -1269,7 +1295,7 @@ function createWindow() {
       await new Promise((resolve) => setTimeout(resolve, 190));
       const compactVariantPopoverDismissed = document.querySelector("#variantPopover").classList.contains("hidden");
       document.querySelector("#compactBtn").click();
-      await new Promise((resolve) => setTimeout(resolve, 220));
+      await waitForCompactMode();
       const firstCard = document.querySelector(".prompt-card");
       const firstPrompt = state.prompts.find((prompt) => prompt.id === firstCard.dataset.id);
       const useCountBefore = firstPrompt.useCount || 0;
@@ -1883,40 +1909,61 @@ async function simulatePasteShortcut() {
   };
 }
 
+function compactTarget(enabled, requestedSize = null) {
+  const current = mainWindow.getBounds();
+  if (!enabled) return normalWindowBounds || { ...current, width: 1080, height: 700 };
+  const display = screen.getDisplayMatching(current);
+  const saved = requestedSize || readState().settings.compactWindowSize || {};
+  const width = Math.min(display.workArea.width, Math.max(360, Number(saved.width) || 420));
+  const height = Math.min(display.workArea.height, Math.max(360, Number(saved.height) || 520));
+  return { x: current.x + Math.max(0, current.width - width), y: current.y, width, height };
+}
+
 function setCompactMode(enabled, requestedSize = null) {
   const next = Boolean(enabled);
+  const current = mainWindow.getBounds();
+  let target;
+  let compactWindowSize;
   if (next) {
-    if (!normalWindowBounds) normalWindowBounds = mainWindow.getBounds();
-    const current = mainWindow.getBounds();
+    if (!normalWindowBounds) normalWindowBounds = current;
     const display = screen.getDisplayMatching(current);
     const saved = requestedSize || readState().settings.compactWindowSize || {};
     const width = Math.min(display.workArea.width, Math.max(360, Number(saved.width) || 420));
     const height = Math.min(display.workArea.height, Math.max(360, Number(saved.height) || 520));
     mainWindow.setMinimumSize(360, 360);
-    mainWindow.setBounds({
+    target = {
       x: current.x + Math.max(0, current.width - width),
       y: current.y,
       width,
       height
-    }, true);
-    mainWindow.setAlwaysOnTop(true, "floating");
-    return { width, height };
-  } else {
-    const compactBounds = mainWindow.getBounds();
-    const compactWindowSize = {
-      width: Math.max(360, compactBounds.width),
-      height: Math.max(360, compactBounds.height)
     };
-    mainWindow.setMinimumSize(840, 560);
-    mainWindow.setBounds(normalWindowBounds || {
-      x: mainWindow.getBounds().x,
-      y: mainWindow.getBounds().y,
+    mainWindow.setAlwaysOnTop(true, "floating");
+    compactWindowSize = { width, height };
+  } else {
+    compactWindowSize = {
+      width: Math.max(360, current.width),
+      height: Math.max(360, current.height)
+    };
+    target = normalWindowBounds || {
+      x: current.x,
+      y: current.y,
       width: 1080,
       height: 700
-    }, true);
+    };
+  }
+  const complete = () => {
+    if (mainWindow.isDestroyed()) return compactWindowSize;
+    if (next) {
+      const bounds = mainWindow.getBounds();
+      return { width: bounds.width, height: bounds.height };
+    }
+    // Raising the minimum before the expansion would cause an immediate jump.
+    mainWindow.setMinimumSize(840, 560);
     normalWindowBounds = null;
     return compactWindowSize;
-  }
+  };
+  mainWindow.setBounds(target, false);
+  return complete();
 }
 
 app.whenReady().then(() => {
@@ -1934,6 +1981,7 @@ app.whenReady().then(() => {
   } });
   if (SMOKE_TEST) return;
   createTray();
+  if (PREVIEW_PROFILE) return;
   const state = readState();
   const result = registerShortcut(state.settings.shortcut || DEFAULT_SHORTCUT);
   if (!result.ok) {
@@ -2052,9 +2100,21 @@ ipcMain.handle("window:set-always-on-top", (_, enabled) => {
   mainWindow.setAlwaysOnTop(Boolean(enabled), "floating");
   return { ok: true };
 });
-ipcMain.handle("window:set-compact-mode", (_, enabled, savedSize) => {
-  const compactWindowSize = setCompactMode(enabled, savedSize);
-  return { ok: true, compactWindowSize };
+ipcMain.handle("window:prepare-compact-mode", async (event, enabled, savedSize) => {
+  if (event.sender !== mainWindow.webContents || compactModeTask || windowTransition.active) return { ok: false };
+  return { ok: true, token: await windowTransition.prepare(compactTarget(Boolean(enabled), savedSize)) };
+});
+ipcMain.handle("window:set-compact-mode", async (event, enabled, savedSize, animate, token) => {
+  if (event.sender !== mainWindow.webContents) return { ok: false };
+  if (compactModeTask) return { ok: false, message: "窗口正在切换。" };
+  const resize = () => setCompactMode(enabled, savedSize);
+  const task = token ? windowTransition.run(token, resize) : Promise.resolve(resize());
+  compactModeTask = task;
+  try {
+    return { ok: true, compactWindowSize: await task };
+  } finally {
+    if (compactModeTask === task) compactModeTask = null;
+  }
 });
 ipcMain.handle("window:get-bounds", () => mainWindow.getBounds());
 ipcMain.handle("window:quit", () => {

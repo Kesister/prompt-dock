@@ -6,6 +6,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: prompt-dock-image:; style-src 'self'; script-src 'self'">
   <title>Prompt Dock</title>
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="motion.css">
 </head>
 <body>
   <svg class="icon-sprite" aria-hidden="true">
@@ -527,6 +528,7 @@
     <div class="dialog-actions update-buttons"><button type="button" id="updateManualBtn" class="secondary">前往下载页面</button><button type="button" id="updateLaterBtn" class="secondary">稍后再说</button><button type="button" id="updateActionBtn" class="primary">检查更新</button></div>
   </dialog>
   <div id="toast" class="toast" popover="manual"></div>
+  <script src="motion.js"></script>
   <script src="renderer.js"></script>
   <script src="update-renderer.js"></script>
 </body>

@@ -8,6 +8,11 @@
 !/author-links.js
 !/update-controller.js
 !/update-renderer.js
+!/motion.js
+!/motion.css
+!/window-transition.js
+!/window-transition-preload.js
+!/window-transition.html
 !/.github/
 !/preload.js
 !/renderer.js
@@ -65,3 +70,4 @@
 /tests/verification-beta.*.md
 /tests/inspect-weixin.js
 /tests/InspectInputSupport.cs
+
