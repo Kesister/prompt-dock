@@ -4,7 +4,7 @@
 
 ## 范围与结构
 
-`main` 当前为 Windows v0.11.3。项目使用 Electron、原生 JavaScript/CSS、本地 SQLite 与 Windows C# 输入助手。
+`main` 当前为 Windows v0.11.2。项目使用 Electron、原生 JavaScript/CSS、本地 SQLite 与 Windows C# 输入助手。
 
 | 位置 | 用途 |
 | --- | --- |
@@ -77,4 +77,5 @@ npm run dist
 3. 检查包内容，确认没有个人数据和意外资源。
 4. 为发布源码创建版本标签；在 Releases 上传安装包和 SHA-256，写明平台、已知限制及升级方法。
 5. 保持 README 的下载链接指向应用发行版，不把可选 Skill 的发布误当作软件更新。
+
 
