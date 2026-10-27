@@ -1,4 +1,4 @@
-const { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, Tray, nativeImage, net, protocol, screen, session, shell } = require("electron");
+const { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, Tray, nativeImage, net, powerMonitor, protocol, screen, session, shell } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const { pathToFileURL } = require("url");
@@ -11,12 +11,13 @@ const slashCore = require("./slash-core");
 const { resolveAuthorLink, authorInfo } = require("./author-links");
 const { UpdateController, RELEASE_URL } = require("./update-controller");
 const { WindowTransition } = require("./window-transition");
+const { ShortcutRegistration } = require("./shortcut-registration");
 const os = require("os");
 const smokeAuthorLinks = [];
 
 let mainWindow;
 let tray;
-let activeShortcut = "";
+const launcherShortcut = new ShortcutRegistration({ globalShortcut, callback: showLauncher });
 let normalWindowBounds = null;
 let compactModeTask = null;
 let windowTransition;
@@ -646,17 +647,14 @@ function ensureWindowOnScreen() {
   });
 }
 
-function registerShortcut(shortcut) {
+function registerShortcut(shortcut, { restore = false } = {}) {
   if (!shortcut || typeof shortcut !== "string") {
     return { ok: false, message: "快捷键格式无效" };
   }
-  if (activeShortcut) globalShortcut.unregister(activeShortcut);
-  const ok = globalShortcut.register(shortcut, showLauncher);
-  if (!ok) {
-    if (activeShortcut) globalShortcut.register(activeShortcut, showLauncher);
+  const result = restore ? launcherShortcut.restore(shortcut) : launcherShortcut.set(shortcut);
+  if (!result.ok) {
     return { ok: false, message: "这个快捷键已被其他程序占用，请换一个组合。" };
   }
-  activeShortcut = shortcut;
   return { ok: true, shortcut };
 }
 
@@ -2002,25 +2000,35 @@ app.whenReady().then(() => {
   createTray();
   if (PREVIEW_PROFILE) return;
   const state = readState();
-  const result = registerShortcut(state.settings.shortcut || DEFAULT_SHORTCUT);
+  const result = registerShortcut(state.settings.shortcut || DEFAULT_SHORTCUT, { restore: true });
   if (!result.ok) {
     // A temporary conflict must never overwrite the user's saved preference.
     dialog.showMessageBox(mainWindow, {
       type: "warning",
       title: "快捷键暂时不可用",
       message: `无法注册唤出快捷键 ${state.settings.shortcut || DEFAULT_SHORTCUT}`,
-      detail: "快捷键可能被其他程序占用。你的设置已保留，可以通过托盘打开 Prompt Dock，在设置中更换快捷键，或关闭冲突程序后重新启动。",
+      detail: "快捷键可能被其他程序暂时占用。你的设置已保留，软件会自动重试；也可以通过托盘打开 Prompt Dock，在设置中更换快捷键。",
       buttons: ["知道了"]
     });
   }
-  slashController.configure(state.settings.slash, [state.settings.shortcut, state.settings.newPromptShortcut]).then(result => {
-    if (!result.ok) { slashController.message = result.message; slashStatusChanged(); }
+  slashController.configure(state.settings.slash, [state.settings.shortcut, state.settings.newPromptShortcut], { restore: true }).then(result => {
+    if (!result.ok) {
+      if (!slashController.shortcutRegistration.error) slashController.message = result.message;
+      slashStatusChanged();
+    }
   });
+  const recoverShortcuts = () => {
+    launcherShortcut.recover();
+    slashController?.recoverShortcut();
+  };
+  powerMonitor.on("resume", recoverShortcuts);
+  powerMonitor.on("unlock-screen", recoverShortcuts);
 });
 
 app.on("window-all-closed", (event) => event.preventDefault());
 app.on("will-quit", () => {
   clearTimeout(updateTimer);
+  launcherShortcut.dispose();
   slashController?.dispose();
   globalShortcut.unregisterAll();
   storage?.close();

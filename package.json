@@ -1,6 +1,6 @@
 {
   "name": "prompt-dock",
-  "version": "0.11.2",
+  "version": "0.11.3",
   "description": "本地优先的 Prompt 桌面启动器",
   "main": "main.js",
   "author": "Codex",
@@ -11,7 +11,7 @@
     "build:focus": "node scripts/build-focus-grant.js",
     "test:slash": "node --test tests/slash-core.test.js",
     "test:preview": "node scripts/test-slash-preview.js",
-    "test": "node --test tests/slash-core.test.js tests/author-links.test.js tests/installer-config.test.js tests/update-controller.test.js tests/update-download.test.js tests/window-transition.test.js tests/smoke-result.test.js",
+    "test": "node --test tests/slash-core.test.js tests/slash-controller-shortcut.test.js tests/shortcut-registration.test.js tests/author-links.test.js tests/installer-config.test.js tests/update-controller.test.js tests/update-download.test.js tests/window-transition.test.js tests/smoke-result.test.js",
     "dist": "npm run build:slash && npm run build:focus && electron-builder --win portable",
     "dist:installer": "npm run build:slash && npm run build:focus && electron-builder --win nsis --x64 --publish never",
     "release:prepare": "node scripts/prepare-release.js"
@@ -32,6 +32,7 @@
     "files": [
       "main.js",
       "author-links.js",
+      "shortcut-registration.js",
       "update-controller.js",
       "update-renderer.js",
       "window-transition.js",

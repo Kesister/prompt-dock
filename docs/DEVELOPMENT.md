@@ -4,7 +4,7 @@
 
 ## 范围与结构
 
-`main` 当前为 Windows v0.11.2。项目使用 Electron、原生 JavaScript/CSS、本地 SQLite 与 Windows C# 输入助手。
+`main` 当前为 Windows v0.11.3。项目使用 Electron、原生 JavaScript/CSS、本地 SQLite 与 Windows C# 输入助手。
 
 | 位置 | 用途 |
 | --- | --- |

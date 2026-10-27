@@ -2557,7 +2557,7 @@ $("#recordSlashShortcutBtn").addEventListener("click", () => {
   $("#slashShortcutHint").classList.remove("error");
 });
 function renderSlashStatus(status) {
-  $("#slashStatusHint").textContent = status.message || (!status.enabled ? "当前：已关闭，不监听输入" : status.paused ? "当前：临时暂停（可在托盘恢复）" : status.running ? "当前：已开启，可在托盘临时暂停" : "当前：助手未运行");
+  $("#slashStatusHint").textContent = status.message || (!status.enabled ? "当前：已关闭，不监听输入" : status.paused ? "当前：临时暂停（可在托盘恢复）" : status.shortcut && status.shortcutRegistered === false ? "当前：快捷键尚未注册成功" : status.running ? "当前：已开启，可在托盘临时暂停" : "当前：助手未运行");
 }
 window.promptDock.onSlashStatus(status => { if (state && status.config) state.settings.slash = status.config; renderSlashStatus(status); });
 window.promptDock.onSlashUsed(usage => {
