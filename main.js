@@ -1859,6 +1859,60 @@ function createWindow() {
       && snapshotManifest.prompts.every(prompt => prompt.imageRefs.every(ref => snapshotArchive.getEntry(ref)));
     updateController = savedUpdateController;
     if (!result.updateCheckUi || !result.updateDownloadUi || !result.updateLaterDoesNotInstall || !result.updateBackupAndInstall) throw new Error('Update smoke test failed');
+    // Send mouse events into this test renderer only. Dragging a text selection
+    // outside a modal must not be mistaken for clicking its backdrop.
+    console.log('SMOKE_PHASE:dialog-drag');
+    mainWindow.setBounds({ width: 1080, height: 760 });
+    const smokePointerGesture = async (from, to = from) => {
+      mainWindow.webContents.sendInputEvent({ type: 'mouseDown', ...from, button: 'left', clickCount: 1 });
+      await new Promise(resolve => setTimeout(resolve, 30));
+      mainWindow.webContents.sendInputEvent({ type: 'mouseMove', ...to, modifiers: ['leftbuttondown'] });
+      await new Promise(resolve => setTimeout(resolve, 30));
+      mainWindow.webContents.sendInputEvent({ type: 'mouseUp', ...to, button: 'left', clickCount: 1 });
+      await new Promise(resolve => setTimeout(resolve, 80));
+    };
+    const smokeDialogPoints = (dialogId, fieldId) => mainWindow.webContents.executeJavaScript(`(() => {
+      const d = document.getElementById(${JSON.stringify(dialogId)}).getBoundingClientRect();
+      const f = document.getElementById(${JSON.stringify(fieldId)}).getBoundingClientRect();
+      return { inside: { x: Math.round(f.left + 140), y: Math.round(f.top + 18) },
+        outside: { x: Math.max(2, Math.round(d.left - 16)), y: Math.round(f.top + 18) } };
+    })()`);
+    await mainWindow.webContents.executeJavaScript(`(async () => {
+      document.querySelectorAll('dialog[open]').forEach(d => d.close());
+      document.getElementById('newPromptBtn').click();
+      document.getElementById('titleField').value = '未保存的拖选测试标题';
+      document.getElementById('contentField').value = '这是一段尚未保存的 Prompt 内容，用来验证向外拖选文字。';
+      await new Promise(resolve => setTimeout(resolve, 350));
+    })()`);
+    const editorPoints = await smokeDialogPoints('editorDialog', 'contentField');
+    await smokePointerGesture(editorPoints.inside, editorPoints.outside);
+    result.editorDragOutsideKeepsOpen = await mainWindow.webContents.executeJavaScript("document.getElementById('editorDialog').open");
+    result.editorDragOutsideKeepsDraft = await mainWindow.webContents.executeJavaScript(`
+      document.getElementById('titleField').value === '未保存的拖选测试标题'
+      && document.getElementById('contentField').value === '这是一段尚未保存的 Prompt 内容，用来验证向外拖选文字。'
+      && document.getElementById('contentField').selectionEnd > document.getElementById('contentField').selectionStart`);
+    await smokePointerGesture(editorPoints.outside);
+    result.editorBackdropClickCloses = await mainWindow.webContents.executeJavaScript("!document.getElementById('editorDialog').open");
+    await mainWindow.webContents.executeJavaScript("document.getElementById('newPromptBtn').click()");
+    await new Promise(resolve => setTimeout(resolve, 350));
+    const reopenedPoints = await smokeDialogPoints('editorDialog', 'contentField');
+    await smokePointerGesture(reopenedPoints.outside, reopenedPoints.inside);
+    result.editorBackdropDragInsideKeepsOpen = await mainWindow.webContents.executeJavaScript("document.getElementById('editorDialog').open");
+    await mainWindow.webContents.executeJavaScript(`(async () => {
+      document.getElementById('editorDialog').close();
+      document.getElementById('vocabularyBulkDialog').showModal();
+      document.getElementById('vocabularyBulkText').value = '这是一段尚未保存的词条内容，用来验证其他弹窗也不会误关闭。';
+      await new Promise(resolve => setTimeout(resolve, 350));
+    })()`);
+    const vocabularyPoints = await smokeDialogPoints('vocabularyBulkDialog', 'vocabularyBulkText');
+    await smokePointerGesture(vocabularyPoints.inside, vocabularyPoints.outside);
+    result.editableDialogDragOutsideKeepsOpen = await mainWindow.webContents.executeJavaScript("document.getElementById('vocabularyBulkDialog').open");
+    const closePoint = await mainWindow.webContents.executeJavaScript(`(() => {
+      const r = document.querySelector('#vocabularyBulkDialog .dialog-head [data-close-dialog]').getBoundingClientRect();
+      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+    })()`);
+    await smokePointerGesture(closePoint);
+    result.dialogExplicitCloseStillWorks = await mainWindow.webContents.executeJavaScript("!document.getElementById('vocabularyBulkDialog').open");
     fs.writeFileSync(path.join(app.getPath("userData"), "smoke-result.json"), JSON.stringify(result, null, 2));
     console.log(`SMOKE_OK:${JSON.stringify(result)}`);
     app.isQuitting = true;

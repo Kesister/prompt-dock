@@ -2273,7 +2273,22 @@ $("#tagDeleteForm").addEventListener("submit", async (event) => {
   toast(`已删除标签“${tagDisplayLabel(source)}”，更新 ${changed} 条 Prompt`);
 });
 $$("dialog").forEach((dialog) => {
+  let backdropPointerId = null;
+  const isBackdrop = (event) => {
+    if (event.target !== dialog) return false;
+    const rect = dialog.getBoundingClientRect();
+    return event.clientX < rect.left || event.clientX > rect.right
+      || event.clientY < rect.top || event.clientY > rect.bottom;
+  };
+  dialog.addEventListener("pointerdown", (event) => {
+    // A selection dragged out of an input can produce a click on the dialog.
+    // Only a gesture that also began on the backdrop may dismiss it.
+    backdropPointerId = event.button === 0 && event.isPrimary !== false && isBackdrop(event)
+      ? event.pointerId : null;
+  }, true);
+  dialog.addEventListener("pointercancel", () => { backdropPointerId = null; }, true);
   dialog.addEventListener("close", () => {
+    backdropPointerId = null;
     if (dialog.id === "settingsDialog") recordingShortcut = null;
     if (dialog.id === "editorDialog") {
       $("#editorForm").scrollTop = 0;
@@ -2282,11 +2297,10 @@ $$("dialog").forEach((dialog) => {
     if (dialog.id === "imageLightbox") hideFloatingMenus();
   });
   dialog.addEventListener("click", (event) => {
-    if (event.target !== dialog) return;
-    const rect = dialog.getBoundingClientRect();
-    const inside = event.clientX >= rect.left && event.clientX <= rect.right
-      && event.clientY >= rect.top && event.clientY <= rect.bottom;
-    if (!inside) dialog.close();
+    const beganOnBackdrop = backdropPointerId !== null
+      && (event.pointerId === undefined || event.pointerId === backdropPointerId);
+    backdropPointerId = null;
+    if (beganOnBackdrop && event.button === 0 && isBackdrop(event)) dialog.close();
   });
 });
 $("#searchInput").addEventListener("input", () => {

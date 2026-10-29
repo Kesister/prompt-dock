@@ -35,7 +35,7 @@ Mac 用户请前往 [Mac 下载页](https://github.com/Kesister/prompt-dock/rele
 
 | 平台 | 当前状态 |
 | --- | --- |
-| Windows x64 | v0.11.3 安装版，提供安装向导、桌面快捷方式和内置更新 |
+| Windows x64 | v0.11.4 安装版，提供安装向导、桌面快捷方式和内置更新 |
 | macOS Apple Silicon | v0.11.2 预览版，提供完整安装包；支持 macOS 12+，需手动下载更新 |
 | Linux | 暂未提供发行包 |
 
