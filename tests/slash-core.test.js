@@ -14,19 +14,20 @@ test('hotkey-only settings ignore legacy trigger/scope while preserving shortcut
   assert.equal(settings({shortcut:''}).shortcut,'');
   assert.equal(settings(null).confirm,'Tab');
 });
-test('beta.2 commit target checks and paste logic remain unchanged',()=>{
+test('reviewed native commit guards include verified selected-text replacement',()=>{
   const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
   const source=fs.readFileSync(path.join(__dirname,'../assets/PromptDock.SlashHelper.cs'),'utf8').replace(/\r\n/g,'\n');
-  const commit=source.slice(source.indexOf('  static void Commit('),source.indexOf('  static void Worker('));
-  assert.equal(crypto.createHash('sha256').update(commit).digest('hex'),'7b21f930263fbbd5f7a90877e6d6f971c2344aaa42a53781ecb254ae5362fa7b');
+  const commit=source.slice(source.indexOf('  static void Commit('),source.indexOf('  static void Restore('));
+  // Behavioral coverage runs the real routines with fake UIA/Win32 in palette-native.test.js.
+  assert.equal(crypto.createHash('sha256').update(commit).digest('hex'),'01c33e537e52fd457820952f87c90ab9538e10abe3b71a6a99d752084d78ca87');
 });
-test('beta.6 first-use acquisition and focus handoff remain unchanged; trigger entry is absent',()=>{
+test('reviewed selection acquisition and focus handoff stay pinned; trigger entry is absent',()=>{
   const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
   const source=fs.readFileSync(path.join(__dirname,'../assets/PromptDock.SlashHelper.cs'),'utf8').replace(/\r\n/g,'\n');
   const controller=fs.readFileSync(path.join(__dirname,'../slash-controller.js'),'utf8').replace(/\r\n/g,'\n');
   const digest=text=>crypto.createHash('sha256').update(text).digest('hex');
-  assert.equal(digest(source.slice(source.indexOf('  static bool AcquirePalette('),source.indexOf('  static void Start('))),'26b6028241e6328b2dfca3b6a25975eccdcd1c30d693690a553f8588c9979439');
-  assert.equal(digest(controller.slice(controller.indexOf('  async commitPalette('),controller.indexOf('  dispose('))),'48062d48b8190a2ea49876f5ceb94e6f318c81b484e0fc6cc1425a51e30bb178');
+  assert.equal(digest(source.slice(source.indexOf('  static bool AcquirePalette('),source.indexOf('  static void Start('))),'bc1f38b0a8679522ef041b14a16e1c7742f8522dd9199361ab4516715c5f9ded');
+  assert.equal(digest(controller.slice(controller.indexOf('  async commitPalette('),controller.indexOf('  dispose('))),'f140879b034a055f1f18277d27237318de030e3969117ab39366659c599a93a1');
   assert.ok(!source.includes('ToUnicodeEx')&&!source.includes('Start(false)')&&!source.includes('Poll();'));
   assert.ok(source.includes('if(!manual)return;')&&source.includes('bool hasTrigger=false;'));
   assert.ok(!source.includes('apps.Contains(')&&!source.includes('Process.GetProcesses()'));
@@ -37,6 +38,23 @@ test('query tokens match across title, notes and body, all required', () => {
 });
 test('alias exact match outranks favorite and trash never appears', () => {
   assert.deepEqual(search(prompts,'ＭＯＤＥＬ').map(p=>p.id),['a','b']);
+});
+
+test('opening the recent list does not scan bodies that are not returned', () => {
+  const expensive = { id: 'other', title: 'Other', favorite: false, get content() { throw new Error('Unnecessary full-body scan'); } };
+  const favorite = { id: 'favorite', title: 'Favorite', content: 'BODY', favorite: true };
+  assert.deepEqual(search([expensive, favorite], '', 1).map(p => p.id), ['favorite']);
+});
+
+test('empty-query ranking and punctuation-only exact aliases keep their existing order', () => {
+  const data = [
+    { id: 'used', title: 'Used', content: 'A', useCount: 10, favorite: false },
+    { id: 'alias', title: 'Alias', content: 'B', alias: '::', favorite: false },
+    { id: 'favorite', title: 'Favorite', content: 'C', favorite: true },
+    { id: 'recent', title: 'Recent', content: 'D', lastUsed: '2026-11-01', favorite: false }
+  ];
+  assert.deepEqual(search(data, '').map(p => p.id), ['favorite', 'recent', 'used', 'alias']);
+  assert.equal(search(data, '::')[0].id, 'alias');
 });
 test('variants, nested tags and limits work without exposing full text', () => {
   const result = search(prompts,'水彩 透明')[0];

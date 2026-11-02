@@ -16,7 +16,7 @@ async function start(extra={}){
   assert.equal((await cmd('set',{text:'BEGIN END',caret:6,fresh:true,...extra})).foreground,true);
   await cmd('hotkey');return start;
 }
-async function ready(){await until(()=>controller.view&&controller.ready);await sleep(80);assert.equal(controller.window.isFocused(),true);}
+async function ready(){await until(()=>controller.view&&!controller.view.acquiring&&controller.ready&&controller.window.isVisible());await sleep(80);assert.equal(controller.window.isFocused(),true);}
 async function confirm(){
   assert.equal(controller.window.isFocused(),true);
   const window=controller.window.getNativeWindowHandle().readBigUInt64LE().toString();
@@ -58,7 +58,7 @@ app.whenReady().then(async()=>{
 
   for(const change of ['focus','cancel','typing']){
     await faults(100);const from=await start();await until(()=>nativeEvents.slice(from).some(e=>e.type==='acquisition-start'));
-    assert.ok(!controller.view,'Popup must not steal focus during acquisition');
+    assert.ok(!controller.window.isVisible()&&!controller.window.isFocused(),'Popup must not steal focus during acquisition');
     if(change==='focus')await cmd('set',{kind:'other',text:'OTHER'});
     else if(change==='cancel')controller.close();
     else await cmd('key',{key:65});

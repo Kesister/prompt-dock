@@ -1,57 +1,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const vm = require('node:vm');
-const { EventEmitter } = require('node:events');
-const { createRequire } = require('node:module');
-
-const filename = path.join(__dirname, '..', 'slash-controller.js');
-const localRequire = createRequire(filename);
 const shortcut = 'Control+Alt+Space';
-
-function fixture() {
-  const registered = new Map();
-  const attempts = [];
-  let blocked = false;
-  const globalShortcut = {
-    register(key, callback) {
-      attempts.push(key);
-      if (blocked || registered.has(key)) return false;
-      registered.set(key, callback);
-      return true;
-    },
-    unregister: key => registered.delete(key),
-    isRegistered: key => registered.has(key)
-  };
-  const spawned = [];
-  const fakeSpawn = () => {
-    const child = new EventEmitter();
-    child.stdout = new EventEmitter();
-    child.stdout.setEncoding = () => {};
-    child.stdin = new EventEmitter();
-    child.stdin.writable = true;
-    child.stdin.write = () => {};
-    child.kill = () => child.emit('exit', 0);
-    spawned.push(child);
-    return child;
-  };
-  const module = { exports: {} };
-  const fakeRequire = name => {
-    if (name === 'electron') return { globalShortcut, ipcMain: new EventEmitter() };
-    if (name === 'child_process') return { spawn: fakeSpawn };
-    return localRequire(name);
-  };
-  vm.runInNewContext(fs.readFileSync(filename, 'utf8'), {
-    module, require: fakeRequire, __dirname: path.dirname(filename),
-    process: { platform: 'win32', pid: 123 }, setTimeout, clearTimeout
-  }, { filename });
-  const controller = new module.exports.SlashController({
-    readState: () => { throw new Error('This test must never read a prompt library.'); },
-    onStatus: () => {}, recordUse: () => {}
-  });
-  return { controller, registered, attempts, spawned, block: value => { blocked = value; } };
-}
+const { fixture: createFixture } = require('./palette-test-fixture');
+const fixture = () => createFixture({ readState: () => { throw new Error('This test must never read a prompt library.'); } });
 
 test('startup conflict retains the enabled preference and reports pending registration', async t => {
   const f = fixture();
@@ -110,6 +61,6 @@ test('registration recovery preserves a deliberate pause and never opens a palet
   f.controller.recoverShortcut();
   assert.equal(f.controller.status().paused, true);
   assert.equal(f.controller.helper, null);
-  assert.equal(f.controller.window, null);
+  assert.equal(f.controller.window.isVisible(), false);
   assert.equal(f.registered.has(shortcut), true);
 });

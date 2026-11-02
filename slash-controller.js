@@ -16,8 +16,14 @@ class SlashController {
   constructor({readState, recordUse, onStatus}) {
     this.readState=readState;this.recordUse=recordUse;this.onStatus=onStatus;this.config=core.settings();
     this.paused=false;this.helper=null;this.window=null;this.view=null;this.message="";this.ready=false;this.pending=false;this.previewEnabled=true;
+    this.helperReady=false;this.paletteRequest=0;this.nextPaletteRequest=0;this.viewRevision=0;this.paintedRevision=0;this.revealRevision=0;
     this.shortcutRegistration=new ShortcutRegistration({globalShortcut,callback:()=>this.openPalette(),onChange:()=>this.onStatus?.()});
-    ipcMain.on("slash:ready",(e,options)=>{if(e.sender===this.window?.webContents){this.previewEnabled=options?.previewEnabled!==false;this.ready=true;if(this.view)this.show(true,false);this.publish();this.reveal();}});
+    ipcMain.on("slash:ready",(e,options)=>{if(e.sender===this.window?.webContents){this.previewEnabled=options?.previewEnabled!==false;this.ready=true;if(this.view){this.show(true,false);this.publish(!this.view.acquiring);}}});
+    ipcMain.on("slash:rendered",(e,value)=>{
+      if(e.sender!==this.window?.webContents||value?.session!==this.view?.session||value?.revision!==this.viewRevision)return;
+      this.paintedRevision=value.revision;
+      if(this.revealRevision===value.revision){this.revealRevision=0;this.reveal();}
+    });
     ipcMain.on("slash:action",(e,action)=>{if(e.sender===this.window?.webContents)this.action(action);});
   }
   executable(){return path.join(__dirname,"assets","PromptDock.SlashHelper.exe").replace("app.asar"+path.sep,"app.asar.unpacked"+path.sep);}
@@ -39,29 +45,56 @@ class SlashController {
     if(!result.ok&&!restore)return {ok:false,message:"调用快捷键无效或已被占用，请更换。"};
     this.config=next;this.close();
     if(!next.enabled){this.paused=false;this.stop();}
-    else if(!this.paused){if(this.helper)this.send({type:"config",...next});else this.start();}
+    else if(!this.paused){if(this.helper)this.send({type:"config",...next});else this.start();this.ensureWindow();}
     this.onStatus?.();return {ok:result.ok,...this.status()};
   }
   start(){
     if(this.helper||!this.config.enabled||this.paused)return;
+    this.helperReady=false;
     const child=spawn(this.executable(),[String(process.pid)],{windowsHide:true,stdio:["pipe","pipe","ignore"]});this.helper=child;let buffer="";
     child.stdout.setEncoding("utf8");child.stdout.on("data",chunk=>{buffer+=chunk;let i;while((i=buffer.indexOf("\n"))>=0){const line=buffer.slice(0,i);buffer=buffer.slice(i+1);try{if(this.helper===child)this.event(JSON.parse(line));}catch{}}});
     child.stdin.on("error",()=>{});
-    const fail=()=>{if(this.helper===child){this.helper=null;this.hide();this.message="快捷调用助手已停止，可在设置中关闭后重新开启。";this.onStatus?.();}};
+    const fail=()=>{if(this.helper===child){this.helper=null;this.helperReady=false;this.hide();this.message="快捷调用助手已停止，可在设置中关闭后重新开启。";this.onStatus?.();}};
     child.on("error",fail);child.on("exit",fail);this.message="";
   }
-  stop(){const child=this.helper;this.helper=null;child?.kill();this.hide();}
+  stop(){const child=this.helper;this.helper=null;this.helperReady=false;child?.kill();this.hide();}
   pause(){this.paused=!this.paused;if(this.paused)this.stop();else this.start();this.onStatus?.();}
-  openPalette(){if(this.config.enabled&&!this.paused){this.start();this.send({type:"palette"});}}
+  openPalette(){
+    if(!this.config.enabled||this.paused)return;
+    if(this.dismissing)return;
+    if(this.view&&!this.view.acquiring){this.dismiss();return;}
+    if(this.view)this.close();
+    this.start();this.ensureWindow();this.paletteRequest=++this.nextPaletteRequest;
+    if(this.helperReady)this.send({type:"palette",request:this.paletteRequest});
+  }
   event(event){
-    if(event.type==="ready"){this.send({type:"config",...this.config});this.message="";this.onStatus?.();}
+    if(event.type==="ready"){
+      this.helperReady=true;this.send({type:"config",...this.config});this.message="";this.onStatus?.();
+      if(this.paletteRequest)this.send({type:"palette",request:this.paletteRequest});
+    }
+    if(event.type==="prepare"||event.type==="query"){
+      if(event.request!==undefined&&event.request!==this.paletteRequest)return;
+    }
+    if(event.type==="prepare"){
+      if(event.palette!==true)return;
+      this.invalidate();this.view={...event,query:"",confirm:this.config.confirm,copyOnly:false,message:"",busy:false,acquiring:true};this.pending=false;
+      this.view.items=this.search("");this.show(true,false);this.publish();
+    }
     if(event.type==="query"){
       if(event.palette!==true)return; // No inline-trigger sessions, even from a stale helper event.
       if(this.message){this.message="";this.onStatus?.();}
       const fresh=event.session!==this.view?.session;
-      if(fresh){this.invalidate();this.view={...event,confirm:this.config.confirm,message:event.copyOnly?(copyReasons[event.copyReason]||"当前输入位置无法验证，本次仅复制。"):"",busy:false};this.pending=false;}
-      else Object.assign(this.view,{query:event.query});
-      this.view.items=this.search(this.view.query);this.show(fresh);this.publish();
+      const prepared=!fresh&&this.view.acquiring===true;
+      const invalidated=prepared&&!this.sessionPrompts;
+      const alreadyPainted=prepared&&this.ready&&this.paintedRevision===this.viewRevision&&Boolean(this.sessionPrompts)
+        &&!event.copyOnly&&event.query===this.view.query&&Boolean(event.replaceSelection)===Boolean(this.view.replaceSelection);
+      if(fresh){this.invalidate();this.view={...event,busy:false};this.pending=false;}
+      else Object.assign(this.view,event);
+      if(invalidated)this.view.previewRevision=(this.view.previewRevision||0)+1;
+      Object.assign(this.view,{confirm:this.config.confirm,acquiring:false,message:event.copyOnly?(copyReasons[event.copyReason]||"当前输入位置无法验证，本次仅复制。"):""});
+      if(!alreadyPainted)this.view.items=this.search(this.view.query);
+      this.show(fresh||prepared,false);
+      if(alreadyPainted)this.reveal();else this.publish(fresh||prepared);
     }
     if(event.type==="key"&&event.session===this.view?.session&&!this.pending)this.window?.webContents.send("slash:key",event.key);
     if(event.type==="closed"&&event.session===this.view?.session&&!this.pending&&!this.view.finished)this.hide();
@@ -76,10 +109,10 @@ class SlashController {
     if(this.window&&!this.window.isDestroyed())return;
     this.ready=false;
     this.window=new BrowserWindow({width:400,height:440,frame:false,show:false,focusable:Boolean(this.view?.palette),skipTaskbar:true,resizable:false,maximizable:false,minimizable:false,alwaysOnTop:true,backgroundColor:"#fffdf9",
-      webPreferences:{preload:path.join(__dirname,"slash-preload.js"),contextIsolation:true,nodeIntegration:false,sandbox:true}});
+      webPreferences:{preload:path.join(__dirname,"slash-preload.js"),contextIsolation:true,nodeIntegration:false,sandbox:true,backgroundThrottling:false}});
     this.window.setMenuBarVisibility(false);this.window.loadFile(path.join(__dirname,"slash.html"));
     this.window.webContents.setWindowOpenHandler(()=>({action:"deny"}));this.window.webContents.on("will-navigate",e=>e.preventDefault());
-    this.window.on("blur",()=>{if(this.view?.palette&&!this.pending)this.close();});
+    this.window.on("blur",()=>{if(this.view?.palette&&!this.view.acquiring&&!this.pending&&this.window?.isVisible())this.close();});
     this.window.on("closed",()=>{this.window=null;this.ready=false;});
   }
   show(fresh, reveal=true){
@@ -93,20 +126,34 @@ class SlashController {
     if(reveal&&this.ready)this.reveal();
   }
   reveal(){
+    if(this.view?.acquiring||this.pending)return;
+    this.revealRevision=0;
     if(this.view?.palette){this.window.show();this.window.focus();this.window.webContents.focus();this.window.webContents.send("slash:focus");}
     else if(this.view)this.window.showInactive();
   }
-  publish(){if(this.ready&&this.view)this.window?.webContents.send("slash:view",this.view);}
-  hide(){clearTimeout(this.noticeTimer);clearTimeout(this.commitTimer);this.invalidate();this.view=null;this.pending=false;if(this.ready)this.window?.webContents.send("slash:hidden");this.window?.hide();}
+  publish(reveal=false){if(this.ready&&this.view){const revision=++this.viewRevision;if(reveal||this.revealRevision)this.revealRevision=revision;this.window?.webContents.send("slash:view",{...this.view,revision});}}
+  hide(){clearTimeout(this.noticeTimer);clearTimeout(this.commitTimer);this.dismissing=null;this.invalidate();this.view=null;this.pending=false;this.paletteRequest=0;this.paintedRevision=0;this.revealRevision=0;if(this.ready)this.window?.webContents.send("slash:hidden");this.window?.hide();}
   close(){this.send({type:"cancel"});this.hide();}
+  async dismiss(){
+    if(this.dismissing)return;
+    if(!this.view?.palette||this.view.acquiring||this.pending){this.close();return;}
+    const task={helper:this.helper,session:this.view.session};this.dismissing=task;
+    const allowed=await this.grantFocus(task.helper);
+    // A blur, settings change, or newer session revokes this focus handoff.
+    if(this.dismissing!==task||this.helper!==task.helper||this.view?.session!==task.session)return;
+    if(allowed){this.send({type:"restore",session:task.session});this.hide();}
+    else this.close();
+  }
   action(value){
     if(!this.view||value?.session!==this.view.session)return;
-    if(value.type==="close"){this.close();return;}
+    if(value.type==="close"){this.dismiss();return;}
+    if(this.dismissing)return;
     if(value.type==="size"){
       const height=Math.max(192,Math.min(464,Number(value.height)||256));
       if(height!==this.view.height){this.view.height=height;this.show(true,false);}
       return;
     }
+    if(this.view.acquiring&&!["preview","preview-toggle"].includes(value.type))return;
     if(this.pending)return;
     if(value.type==="preview-toggle"&&this.view.palette){this.previewEnabled=value.enabled===true;this.show(true,false);return;}
     if(value.type==="preview"&&this.view.palette){
@@ -128,9 +175,8 @@ class SlashController {
     else this.send({type:"commit",session:this.view.session,query:this.view.query});
     this.commitTimer=setTimeout(()=>{if(this.pending&&this.view){this.pending=false;this.view.busy=false;this.view.finished=true;this.view.copyOnly=true;this.view.message="输入框未响应，内容已复制，请手动粘贴。";this.send({type:"cancel"});this.publish();if(this.view.palette)this.reveal();}},1800);
   }
-  async commitPalette(session){
-    const helper=this.helper;
-    const allowed=helper&&await new Promise(resolve=>{
+  async grantFocus(helper){
+    return helper&&await new Promise(resolve=>{
       const exe=path.join(__dirname,"assets","PromptDock.FocusGrant.exe").replace("app.asar"+path.sep,"app.asar.unpacked"+path.sep);
       const child=spawn(exe,[String(process.pid),String(helper.pid)],{windowsHide:true,stdio:["ignore","pipe","ignore"]});
       let output="",done=false;
@@ -138,9 +184,13 @@ class SlashController {
       const timer=setTimeout(()=>{child.kill();finish(false);},500);
       child.stdout.on("data",value=>output+=value);child.on("error",()=>finish(false));child.on("close",code=>finish(code===0&&output.trim()==="OK"));
     });
+  }
+  async commitPalette(session){
+    const helper=this.helper;
+    const allowed=await this.grantFocus(helper);
     if(!this.pending||this.view?.session!==session||helper!==this.helper)return;
     if(!allowed){this.event({type:"result",session,ok:false,message:"无法返回原输入框，Prompt 已复制，请手动粘贴。"});return;}
-    // Only the focus handoff changes. beta.2 still validates and pastes itself.
+    // The native helper rechecks the original input and selection before pasting.
     this.window.hide();this.send({type:"commit",session,query:this.view.query});
   }
   dispose(){clearTimeout(this.commitTimer);this.shortcutRegistration.dispose();this.stop();this.window?.destroy();}

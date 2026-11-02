@@ -11,13 +11,15 @@ function settings(value = {}) {
 function search(prompts, query, limit = 7) {
   const q = normalize(query), tokens = q.match(/[\p{L}\p{N}]+/gu) || [];
   return prompts.filter(p => !p.deletedAt).map(p => {
-    const fields = [[p.alias, 30], [p.title, 16], [(p.tags || []).join(" "), 12], [p.usageNote, 7], [p.content, 5],
-      [(p.variants || []).map(v => `${v.title} ${v.content}`).join(" "), 6]].map(([v, w]) => [normalize(v), w]);
     let score = 0;
-    for (const token of tokens) {
-      const best = Math.max(0, ...fields.map(([v, w]) => v.includes(token) ? w + (v.startsWith(token) ? 3 : 0) : 0));
-      if (!best) return null;
-      score += best;
+    if (tokens.length) {
+      const fields = [[p.alias, 30], [p.title, 16], [(p.tags || []).join(" "), 12], [p.usageNote, 7], [p.content, 5],
+        [(p.variants || []).map(v => `${v.title} ${v.content}`).join(" "), 6]].map(([v, w]) => [normalize(v), w]);
+      for (const token of tokens) {
+        const best = Math.max(0, ...fields.map(([v, w]) => v.includes(token) ? w + (v.startsWith(token) ? 3 : 0) : 0));
+        if (!best) return null;
+        score += best;
+      }
     }
     if (q && normalize(p.alias) === q) score += 100;
     return { p, score };

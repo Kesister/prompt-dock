@@ -6,5 +6,6 @@ contextBridge.exposeInMainWorld("slash", {
   onPreview: fn => ipcRenderer.on("slash:preview", (_, value) => fn(value)),
   onHidden: fn => ipcRenderer.on("slash:hidden", () => fn()),
   action: value => ipcRenderer.send("slash:action", value),
-  ready: options => ipcRenderer.send("slash:ready", options)
+  ready: options => ipcRenderer.send("slash:ready", options),
+  rendered: value => ipcRenderer.send("slash:rendered", value)
 });

@@ -27,7 +27,7 @@ internal static class SlashHelper {
   static IntPtr targetFocus=IntPtr.Zero;
   static AutomationElement element;
   static TextPatternRange paletteRange;
-  static string identity="", prefix="", token="", lastQuery="";
+  static string identity="", prefix="", token="", lastQuery="", paletteText="";
   static string lastUnsupportedApp="";
   static int serial=0;
   static long lastVerified;
@@ -111,10 +111,13 @@ internal static class SlashHelper {
     }
     return CallNextHookEx(mouseHook,code,message,data);
   }
-  static TextPatternRange Caret(AutomationElement e) {
+  static TextPatternRange Selection(AutomationElement e) {
     object o;if(!e.TryGetCurrentPattern(TextPattern.Pattern,out o))return null;
     var ranges=((TextPattern)o).GetSelection();if(ranges.Length!=1)return null;
-    var r=ranges[0];if(r.CompareEndpoints(TextPatternRangeEndpoint.Start,r,TextPatternRangeEndpoint.End)!=0)return null;return r;
+    return ranges[0];
+  }
+  static TextPatternRange Caret(AutomationElement e) {
+    var r=Selection(e);if(r==null||r.CompareEndpoints(TextPatternRangeEndpoint.Start,r,TextPatternRangeEndpoint.End)!=0)return null;return r;
   }
   static string Before(TextPatternRange r) {var left=r.Clone();left.MoveEndpointByUnit(TextPatternRangeEndpoint.Start,TextUnit.Character,-256);return left.GetText(512);}
   static bool Split(string text,out string before,out string match) {
@@ -132,7 +135,7 @@ internal static class SlashHelper {
   // samples before showing (and focusing) the search popup. No text is changed.
   static bool AcquirePalette(int g,out AutomationElement e,out TextPatternRange range,out string reason) {
     e=null;range=null;reason="caret-unavailable";
-    var clock=Stopwatch.StartNew();TextPatternRange previous=null;string pinnedId="";int attempts=0;
+    var clock=Stopwatch.StartNew();TextPatternRange previous=null;string previousText="",pinnedId="";int attempts=0;
     acquiring=true;
 #if SLASH_TEST
     Emit(new{type="acquisition-start"});
@@ -152,7 +155,7 @@ internal static class SlashHelper {
               if(pinnedId.Length>0&&pinnedId!=currentId){reason="element-changed";return false;}
               pinnedId=currentId;e=current;
               object value;bool readOnly=current.TryGetCurrentPattern(ValuePattern.Pattern,out value)&&((ValuePattern)value).Current.IsReadOnly;
-              var caret=readOnly?null:Caret(current);
+              var caret=readOnly?null:Selection(current);
               // Rich text providers may expose TextPattern without ValuePattern.
               if(caret!=null){var attribute=caret.GetAttributeValue(TextPattern.IsReadOnlyAttribute);if(attribute is bool&&(bool)attribute){readOnly=true;caret=null;}}
 #if SLASH_TEST
@@ -160,10 +163,11 @@ internal static class SlashHelper {
 #endif
               reason=readOnly?"read-only":caret==null?"caret-unavailable":"caret-unstable";
               if(caret!=null&&!IsComposing()) {
-                if(previous!=null&&caret.Compare(previous)&&g==generation&&SameTarget()&&clock.ElapsedMilliseconds<=PaletteAcquireMs) {
+                var text=caret.GetText(-1);
+                if(previous!=null&&caret.Compare(previous)&&text==previousText&&g==generation&&SameTarget()&&clock.ElapsedMilliseconds<=PaletteAcquireMs) {
                   range=caret;reason="";return true;
                 }
-                previous=caret.Clone();
+                previous=caret.Clone();previousText=text;
               } else {previous=null;if(IsComposing())reason="composing";}
               // A confirmed read-only control cannot become editable by waiting.
               if(readOnly)break;
@@ -187,11 +191,13 @@ internal static class SlashHelper {
 #endif
     }
   }
-  static void Start(bool manual) {
+  static void Start(bool manual,int request=0) {
     // Retain the proven acquisition/commit routines, but expose only the hotkey entry.
     if(!manual)return;
     int startGeneration=generation;
     target=GetForegroundWindow();targetFocus=FocusWindow();if(!Allowed(target)||targetFocus==IntPtr.Zero)return;
+    serial++;var anchor=Anchor();
+    Emit(new{type="prepare",session=serial,request=request,palette=true,x=anchor.x,y=anchor.y});
     AutomationElement e;TextPatternRange r;string copyReason="";
     if(manual) {
       if(!AcquirePalette(startGeneration,out e,out r,out copyReason))return;
@@ -213,10 +219,11 @@ internal static class SlashHelper {
     if(manual&&e!=null&&!e.Current.HasKeyboardFocus){r=null;hasTrigger=false;copyReason="focus-not-ready";}
     if(!hasTrigger){found="";pre="";}
     identity=e==null?"":Id(e);element=e;prefix=pre;token=found;lastQuery=hasTrigger?found.Substring(trigger.Length):"";paletteRange=manual?r:null;palette=manual;
+    paletteText=paletteRange==null?"":paletteRange.GetText(-1);
     lastUnsupportedApp="";
     Interlocked.Exchange(ref lastVerified,DateTime.UtcNow.Ticks);
-    serial++;visible=true;ime=IsComposing();var p=Anchor();
-    Emit(new{type="query",session=serial,query=lastQuery,palette=manual,copyOnly=manual&&r==null,copyReason=copyReason,x=p.x,y=p.y});
+    visible=true;ime=IsComposing();var p=Anchor();
+    Emit(new{type="query",session=serial,request=request,query=lastQuery,palette=manual,copyOnly=manual&&r==null,replaceSelection=manual&&r!=null&&r.CompareEndpoints(TextPatternRangeEndpoint.Start,r,TextPatternRangeEndpoint.End)!=0,copyReason=copyReason,x=p.x,y=p.y});
   }
   static void Poll() {
     if(!visible||palette||busy)return;
@@ -265,9 +272,12 @@ internal static class SlashHelper {
       if(!WaitForMouseRelease(g,expires))return;
       if(palette) {if(!SetForegroundWindow(target)&&GetForegroundWindow()!=target)return;Thread.Sleep(100);}
       if(!SameTarget()||!Allowed(target))return;
-      var e=AutomationElement.FocusedElement;if(e==null||e.Current.IsPassword||!e.Current.HasKeyboardFocus||Id(e)!=identity||IsComposing())return;
-      var r=Caret(e);if(r==null)return;
-      if(palette&& (paletteRange==null||!r.Compare(paletteRange)))return;
+      var e=AutomationElement.FocusedElement;if(e==null||e.Current.IsPassword||!e.Current.IsEnabled||!e.Current.HasKeyboardFocus||Id(e)!=identity||IsComposing())return;
+      var r=palette?Selection(e):Caret(e);if(r==null)return;
+      object value;if(e.TryGetCurrentPattern(ValuePattern.Pattern,out value)&&((ValuePattern)value).Current.IsReadOnly)return;
+      var readOnly=r.GetAttributeValue(TextPattern.IsReadOnlyAttribute);if(readOnly is bool&&(bool)readOnly)return;
+      if(palette&&(paletteRange==null||!r.Compare(paletteRange)||r.GetText(-1)!=paletteText))return;
+      bool replaceSelection=palette&&r.CompareEndpoints(TextPatternRangeEndpoint.Start,r,TextPatternRangeEndpoint.End)!=0;
       bool replaceTrigger=token.Length>0;
       if(replaceTrigger) {
         string pre,found;if(!Split(Before(r),out pre,out found)||pre!=prefix||found!=token||(!palette&&found.Substring(trigger.Length)!=Str(command,"query")))return;
@@ -280,13 +290,42 @@ internal static class SlashHelper {
         r.Select();
         if(!ConfirmSelection(e,r,token,g,expires)){reason="输入框没有确认选中触发词，已停止自动粘贴。Prompt 已复制，请手动选中触发词后粘贴。";return;}
       }
+      if(replaceSelection&&!ConfirmSelection(e,r,paletteText,g,expires)){reason="原选区已变化，内容已复制，请重新选择文字后粘贴。";return;}
       if(!ReadyForCommit(g,expires,e))return;
       if(replaceTrigger&&!SelectionMatches(e,r,token))return;
+      if(palette&&!SelectionMatches(e,r,paletteText))return;
       ok=Paste();reason=ok?"":"系统未接受粘贴，内容已复制，请手动粘贴。";
     } catch {reason="该输入框暂不支持自动替换，内容已复制，请手动粘贴。";}
     finally {Cancel();Emit(new{type="result",session=s,ok=ok,message=reason});}
   }
+  static void Restore(Dictionary<string,object> command) {
+    int s;if(!Int32.TryParse(Str(command,"session"),out s)||s!=serial||!visible||!palette||busy)return;
+    busy=true;int g=generation;long expires=Convert.ToInt64(command["expires"]);bool ok=false;
+    try {
+      if(!WaitForMouseRelease(g,expires))return;
+      while(Down(27)||Down(17)||Down(18)||Down(16)||Down(91)||Down(92)){
+        if(g!=generation||DateTime.UtcNow.Ticks>expires)return;Thread.Sleep(15);
+      }
+      if(g!=generation||DateTime.UtcNow.Ticks>expires||!Allowed(target))return;
+      // Restore only from our popup or the original application. A click into
+      // another application must never be undone by a delayed cancellation.
+      uint foregroundPid;var foreground=GetForegroundWindow();GetWindowThreadProcessId(foreground,out foregroundPid);
+      if(foreground!=target&&foregroundPid!=owner)return;
+      if(element!=null&&(Id(element)!=identity||element.Current.IsPassword||!element.Current.IsEnabled))return;
+      if(foreground==target&&(!SameTarget()||element!=null&&!element.Current.HasKeyboardFocus))return;
+      if(!SetForegroundWindow(target)&&GetForegroundWindow()!=target)return;
+      Thread.Sleep(60);
+      if(g!=generation||DateTime.UtcNow.Ticks>expires||!SameTarget())return;
+      var focused=AutomationElement.FocusedElement;
+      if(element!=null&&focused!=null&&Id(focused)!=identity)return;
+      if(element!=null&&!element.Current.HasKeyboardFocus)element.SetFocus();
+      ok=SameTarget()&&(element==null||element.Current.HasKeyboardFocus&&Id(AutomationElement.FocusedElement)==identity);
+    } catch {}
+    finally {Cancel();Emit(new{type="restored",session=s,ok=ok});}
+  }
   static void Worker() {
+    // Initialize UI Automation while the feature is idle, without reading a field.
+    try { GC.KeepAlive(AutomationElement.RootElement); } catch {}
     int observed=generation;
     while(running) {
       wake.WaitOne(visible?90:500);
@@ -294,15 +333,16 @@ internal static class SlashHelper {
         Dictionary<string,object> c=null;lock(commandLock){if(commands.Count>0)c=commands.Dequeue();if(commands.Count>0)wake.Set();}
         if(c!=null) {
           string type=Str(c,"type");
-          if(type=="palette"){Cancel();Start(true);}
+          if(type=="palette"){int request;Int32.TryParse(Str(c,"request"),out request);Cancel();Start(true,request);}
 #if SLASH_TEST
           else if(type=="test-acquisition"){testMissingCaretReads=Convert.ToInt32(c["misses"]);Emit(new{type="test-acquisition-ready"});}
 #endif
           else if(type=="commit")Commit(c);
+          else if(type=="restore")Restore(c);
           else if(type=="config") {Cancel();confirm=Str(c,"confirm");}
           else if(type=="cancel")Cancel();
         }
-        if(observed!=generation){observed=generation;if(!visible){element=null;paletteRange=null;identity="";prefix="";token="";lastQuery="";Emit(new{type="closed",session=serial});}}
+        if(observed!=generation){observed=generation;if(!visible){element=null;paletteRange=null;paletteText="";identity="";prefix="";token="";lastQuery="";Emit(new{type="closed",session=serial});}}
 #if SLASH_TEST
       } catch (Exception error) {
         Emit(new{type="diagnostic-error",message=error.Message});
@@ -316,7 +356,7 @@ internal static class SlashHelper {
     if(args.Length<1||!Int32.TryParse(args[0],out owner))return 2;
     Console.InputEncoding=Encoding.UTF8;Console.OutputEncoding=new UTF8Encoding(false);SetProcessDPIAware();
     var worker=new Thread(Worker){IsBackground=true};worker.SetApartmentState(ApartmentState.MTA);worker.Start();
-    var reader=new Thread(()=>{string line;while((line=Console.ReadLine())!=null){try{var c=json.Deserialize<Dictionary<string,object>>(line);if(Str(c,"type")=="cancel"){Cancel();continue;}if(Str(c,"type")=="bounds"){popupLeft=Convert.ToInt32(c["x"]);popupTop=Convert.ToInt32(c["y"]);popupRight=popupLeft+Convert.ToInt32(c["width"]);popupBottom=popupTop+Convert.ToInt32(c["height"]);}else{if(Str(c,"type")=="commit")c["expires"]=DateTime.UtcNow.AddMilliseconds(1400).Ticks;lock(commandLock)commands.Enqueue(c);wake.Set();}}catch{}}Environment.Exit(0);}){IsBackground=true};reader.Start();
+    var reader=new Thread(()=>{string line;while((line=Console.ReadLine())!=null){try{var c=json.Deserialize<Dictionary<string,object>>(line);if(Str(c,"type")=="cancel"){Cancel();continue;}if(Str(c,"type")=="bounds"){popupLeft=Convert.ToInt32(c["x"]);popupTop=Convert.ToInt32(c["y"]);popupRight=popupLeft+Convert.ToInt32(c["width"]);popupBottom=popupTop+Convert.ToInt32(c["height"]);}else{if(Str(c,"type")=="commit"||Str(c,"type")=="restore")c["expires"]=DateTime.UtcNow.AddMilliseconds(1400).Ticks;lock(commandLock)commands.Enqueue(c);wake.Set();}}catch{}}Environment.Exit(0);}){IsBackground=true};reader.Start();
     keyboardHook=SetWindowsHookEx(13,keyboardProc,GetModuleHandle(null),0);mouseHook=SetWindowsHookEx(14,mouseProc,GetModuleHandle(null),0);
     if(keyboardHook==IntPtr.Zero||mouseHook==IntPtr.Zero){Emit(new{type="error",message="输入监听启动失败"});return 1;}
     var watchdog=new System.Windows.Forms.Timer{Interval=400};watchdog.Tick+=(s,e)=>{if(visible&&!palette&&DateTime.UtcNow.Ticks-Interlocked.Read(ref lastVerified)>TimeSpan.TicksPerSecond*2)Cancel();};watchdog.Start();

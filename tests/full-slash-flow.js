@@ -7,7 +7,7 @@ const { SlashController } = require('../slash-controller');
 app.setPath('userData',fs.mkdtempSync(path.join(os.tmpdir(),'prompt-dock-beta2-keyboard-test-')));
 let host,controller,id=0,events=[],used=[],nativeEvents=[],closeEvents=[];
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-async function until(check){for(let i=0;i<160;i++){const r=check();if(r)return r;await sleep(50);}throw Error('Flow timeout: '+JSON.stringify({view:controller?.view,used,nativeEvents:nativeEvents.slice(-12)}));}
+async function until(check){for(let i=0;i<160;i++){const r=await check();if(r)return r;await sleep(50);}throw Error('Flow timeout: '+JSON.stringify({view:controller?.view,used,nativeEvents:nativeEvents.slice(-12)}));}
 async function cmd(type,extra={}){const n=++id;host.stdin.write(JSON.stringify({id:n,type,...extra})+'\n');return until(()=>events.find(e=>e.id===n));}
 const js=code=>controller.window.webContents.executeJavaScript(code);
 const popupHandle=()=>controller.window.getNativeWindowHandle().readBigUInt64LE().toString();
@@ -25,10 +25,10 @@ async function click(selector){
   wc.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...point});
   wc.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,...point});await sleep(100);
 }
-async function open(text='PREFIX  SUFFIX',caret=7){
-  controller.close();const state=await cmd('set',{text,caret});
+async function open(text='PREFIX  SUFFIX',caret=7,length=0){
+  controller.close();const state=await cmd('set',{text,caret,length});
   assert.equal(state.foreground,true,'Test host not foreground; refusing hotkey');
-  await sleep(100);await cmd('hotkey');await until(()=>controller.view&&controller.ready);await sleep(200);
+  await sleep(100);await cmd('hotkey');await until(()=>controller.view&&!controller.view.acquiring&&controller.ready&&controller.window.isVisible());await sleep(200);
   assert.equal(controller.view.palette,true);assert.equal(controller.window.isFocused(),true);
   assert.equal(await js('document.activeElement.id'),'search');
 }
@@ -81,6 +81,14 @@ app.whenReady().then(async()=>{
   await open('KEEP',4);assert.equal(await js('document.getElementById("search").value'),'');
   await query('not found');await press('Return');assert.equal(used.length,2);assert.equal((await cmd('read')).text,'KEEP');await press('Escape');
   console.log('PASS: reopening resets search; empty results cannot paste');
+  await open('PREFIX OLD SUFFIX',7,3);assert.equal(controller.view.copyOnly,false);assert.equal(controller.view.replaceSelection,true);
+  await query('gray');await click('.badge');await press('Down');
+  await click('.item.selected');await usedOnce(3,'PREFIX VARIANT SUFFIX');
+  console.log('PASS: mouse selection is replaced once and surrounding text is preserved');
+  await open('PREFIX KEEP SUFFIX',7,4);await press('Escape');await until(()=>!controller.view);
+  await until(async()=>Boolean((await cmd('read')).foreground));
+  const cancelled=await cmd('read');assert.equal(cancelled.text,'PREFIX KEEP SUFFIX');assert.equal(cancelled.caret,7);assert.equal(cancelled.length,4);
+  console.log('PASS: Esc restores the original field without changing its selected text');
   for(const symbol of ['/', '//', ';;']){
     // Also test a legacy denylist that explicitly contains this host.
     await controller.configure({...config,trigger:symbol,scope:'exclude',apps:['SlashTestHost']});await sleep(120);

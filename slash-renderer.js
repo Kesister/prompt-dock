@@ -1,4 +1,4 @@
-let view = { items:[] }, selected = 0, variants = null, composing = false, compositionEndedAt = 0, pendingConfirm = "";
+let view = { items:[] }, selected = 0, variants = null, composing = false, compositionEndedAt = 0, pendingConfirm = "", pendingDismiss = false;
 const $ = id => document.getElementById(id);
 let previewEnabled=true, previewRequest=0, previewKey="";
 try{previewEnabled=localStorage.getItem("promptDock.quickPreview")!=="false";}catch{}
@@ -16,7 +16,7 @@ function updatePreview(){
   $("preview-toggle").title=previewEnabled?"收起预览":"展开预览";$("preview-toggle").setAttribute("aria-label",$("preview-toggle").title);
   const value=choice();
   if(!visible||!value){clearPreview(value?"选中一条 Prompt 查看内容":"没有可预览的内容");return;}
-  const nextKey=JSON.stringify([view.session,value.id,value.variant]);if(nextKey===previewKey)return;
+  const nextKey=JSON.stringify([view.session,value.id,value.variant,view.previewRevision||0]);if(nextKey===previewKey)return;
   clearPreview("正在读取预览…");previewKey=nextKey;
   window.slash.action({type:"preview",session:view.session,requestId:previewRequest,...value});
 }
@@ -38,7 +38,7 @@ function render() {
     b.addEventListener("mousedown",e=>e.preventDefault());b.addEventListener("click",e=>{if(e.button===0){selected=index;choose();}});$("results").append(b);
   });
   $("query").textContent=variants?`‹ ${variants.title} · 选择版本`:view.query?`搜索：${view.query}`:"常用与最近使用";
-  $("hint").textContent=view.message || `↑↓ 选择 · ${variants?"← 返回":"→ 版本"} · ${view.confirm||"Tab"} ${view.copyOnly?"复制":"插入"} · Esc ${variants?"返回":"取消"}`;
+  $("hint").textContent=view.message || `↑↓ 选择 · ${variants?"← 返回":"→ 版本"} · ${view.confirm||"Tab"} ${view.copyOnly?"复制":view.replaceSelection?"替换选中文字":"插入"} · Esc ${variants?"返回":"取消"}`;
   $("results").querySelector(".selected")?.scrollIntoView({block:"nearest"});
   updatePreview();
   window.slash.action({type:"size",session:view.session,height:128+(view.palette?56:0)+Math.max(1,items.length)*64});
@@ -53,9 +53,13 @@ function key(k) {
 }
 window.slash.onState(next => {
   const fresh=next.session!==view.session, changed=next.query!==view.query;view=next;
-  if(fresh||changed){selected=0;variants=null;pendingConfirm="";clearPreview();}
+  if(fresh||changed){selected=0;variants=null;pendingConfirm="";pendingDismiss=false;clearPreview();}
   $("search").hidden=!view.palette;$("mode").textContent=view.copyOnly?"兼容模式 · 仅复制":view.palette?"快捷键调用":"输入框内匹配";
   render();if(fresh&&view.palette){composing=false;compositionEndedAt=0;$("search").value=view.query||"";$("search").focus();$("search").select();}
+  if(Number.isSafeInteger(view.revision)){
+    const rendered={session:view.session,revision:view.revision};
+    requestAnimationFrame(()=>window.slash.rendered(rendered));
+  }
 });
 window.slash.onPreview(result=>{
   if(result.session!==view.session||result.requestId!==previewRequest||!view.palette||!previewEnabled)return;
@@ -70,7 +74,7 @@ window.slash.onPreview(result=>{
   $("preview-images").replaceChildren(...detail.images.map((source,index)=>{const img=document.createElement("img");img.src=source;img.alt=`参考图 ${index+1}`;img.draggable=false;img.decoding="async";return img;}));
   $("preview-placeholder").hidden=true;$("preview-content").hidden=false;
 });
-window.slash.onHidden(()=>{view={items:[]};variants=null;selected=0;pendingConfirm="";clearPreview();});
+window.slash.onHidden(()=>{view={items:[]};variants=null;selected=0;pendingConfirm="";pendingDismiss=false;clearPreview();});
 $("results").addEventListener("pointermove",e=>{
   // Stationary pointer events caused by scrolling/layout must not undo keyboard selection.
   if(!view.palette||view.busy||(!e.movementX&&!e.movementY))return;
@@ -86,7 +90,7 @@ $("preview-toggle").addEventListener("click",()=>{
 window.slash.onKey(k=>{if(!view.palette)key(k);});
 window.slash.onFocus(()=>{if(view.palette)$("search").focus({preventScroll:true});});
 $("close").addEventListener("mousedown",e=>{e.preventDefault();window.slash.action({type:"close",session:view.session});});
-$("search").addEventListener("compositionstart",()=>{composing=true;pendingConfirm="";});
+$("search").addEventListener("compositionstart",()=>{composing=true;pendingConfirm="";pendingDismiss=false;});
 $("search").addEventListener("compositionend",()=>{composing=false;compositionEndedAt=Date.now();window.slash.action({type:"query",session:view.session,query:$("search").value});});
 $("search").addEventListener("input",()=>{if(!composing)window.slash.action({type:"query",session:view.session,query:$("search").value});});
 window.addEventListener("keydown",e=>{
@@ -99,14 +103,20 @@ window.addEventListener("keydown",e=>{
   if(!["ArrowUp","ArrowDown","Escape",view.confirm||"Tab"].includes(e.key)&&!right&&!left)return;
   e.preventDefault();e.stopPropagation();
   if(e.repeat&&["Escape",view.confirm||"Tab"].includes(e.key))return;
+  if(e.key==="Escape"&&!variants){pendingConfirm="";pendingDismiss=true;return;}
   if(e.key===(view.confirm||"Tab")){if(!view.busy)pendingConfirm=e.key;return;}
   if(!view.busy||e.key==="Escape")key(e.key);
 },true);
 // Wait for release so held Enter/Tab cannot leak into the target after insertion.
 window.addEventListener("keyup",e=>{
+  if(view.palette&&e.key==="Escape"&&pendingDismiss){
+    pendingDismiss=false;e.preventDefault();e.stopPropagation();
+    if(!composing&&!e.isComposing&&!e.ctrlKey&&!e.altKey&&!e.metaKey&&!e.shiftKey&&Date.now()-compositionEndedAt>=80)key("Escape");
+    return;
+  }
   if(!view.palette||e.key!==pendingConfirm)return;
   pendingConfirm="";e.preventDefault();e.stopPropagation();
   if(!composing&&!e.isComposing&&!e.ctrlKey&&!e.altKey&&!e.metaKey&&!e.shiftKey&&Date.now()-compositionEndedAt>=80)choose();
 },true);
-window.addEventListener("blur",()=>{pendingConfirm="";});
+window.addEventListener("blur",()=>{pendingConfirm="";pendingDismiss=false;});
 window.slash.ready({previewEnabled});
