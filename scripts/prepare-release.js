@@ -20,5 +20,5 @@ fs.writeFileSync(path.join(output, 'SHA256SUMS.txt'), files.map(file => `${creat
 const changelog = fs.readFileSync(path.join(root, 'docs', 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
 const entry = changelog.split(`## ${version}\n`)[1]?.split('\n## ')[0]?.trim();
 if (!entry) throw new Error('Add release notes to docs/CHANGELOG.md before publishing.');
-fs.writeFileSync(path.join(output, 'RELEASE-NOTES.md'), `${entry}\n\nWindows x64。旧版用户请先导出 .promptdock 备份、从托盘退出旧版，再运行 Setup.exe 覆盖安装。v0.11.1 起可在设置中检查后续更新。\n`);
+fs.writeFileSync(path.join(output, 'RELEASE-NOTES.md'), `${entry}\n\n**下载与更新**\n\nWindows x64 请下载下方的 **${name}**。升级前建议备份资料，并从托盘退出旧版，再沿用原安装目录覆盖安装。原有资料会保留。\n\nv0.11.1 起也可在软件设置中检查更新。\n`);
 console.log(`Release v${version} verified: installer, blockmap, latest.yml, SHA256SUMS.txt`);

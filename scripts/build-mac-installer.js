@@ -86,7 +86,7 @@ fs.writeFileSync(distribution, xml);
 const resources = path.join(work, 'resources');
 fs.mkdirSync(resources);
 fs.writeFileSync(path.join(resources, 'welcome.html'), page(`安装 Prompt Dock ${version}`, '<p>完整的 Mac 桌面应用，适用于 Apple Silicon（M 系列芯片），macOS 12 或更高版本。</p><p>请先退出正在运行的 Prompt Dock，再继续安装。</p><p>安装位置：<b>应用程序 → Prompt Dock</b></p><p>内含完整运行环境和原生粘贴助手。安装后可直接打开应用，无需启动脚本、Node.js 或命令行。</p>'));
-fs.writeFileSync(path.join(resources, 'readme.html'), page('安装与使用', '<h2>资料保存</h2><p>安装只替换应用程序。已有的 Prompt、图片、设置和备份保存在各自的用户资料目录中，不包含在安装包里，也不会被安装程序删除或重置。</p><h2>直接粘贴</h2><p>在目标软件中先点输入框，再选择 Prompt。快捷浮窗可在设置中开启，默认 ⌘⇧Space 唤出、Tab 确认。</p><p>若系统要求授权，请在应用设置的「Mac 直接粘贴权限」中检查，按提示为「应用程序」里的 Prompt Dock 开启辅助功能。</p><h2>版本说明</h2><p>本版本改进了浏览器输入框识别和选中文字替换，并保持快捷浮窗快速响应。</p><p>当前安装包未进行 Apple Developer ID 签名及公证，内置自动安装更新暂不可用，请通过项目发布页下载安装更新。</p>'));
+fs.writeFileSync(path.join(resources, 'readme.html'), page('安装与使用', '<h2>资料保存</h2><p>安装只替换应用程序。已有的 Prompt、图片、设置和备份保存在各自的用户资料目录中，不包含在安装包里，也不会被安装程序删除或重置。</p><h2>直接粘贴</h2><p>在目标软件中先点输入框，再选择 Prompt。快捷浮窗可在设置中开启，默认 ⌘⇧Space 唤出、Tab 确认。</p><p>若系统要求授权，请在应用设置的「Mac 直接粘贴权限」中检查，按提示为「应用程序」里的 Prompt Dock 开启辅助功能。</p><h2>版本说明</h2><p>本版本同步了侧栏和超小窗口过渡、快捷键自动恢复，并修复拖选文字时编辑弹窗意外关闭的问题。保留浏览器直接填入和 Mac 独立更新检查。</p><p>当前安装包未进行 Apple Developer ID 签名及公证，内置自动安装更新暂不可用，请通过项目发布页下载安装更新。</p>'));
 fs.writeFileSync(path.join(resources, 'conclusion.html'), page('Prompt Dock 已安装', '<p>现在可以关闭安装器，在<b>应用程序</b>中打开 <b>Prompt Dock</b>。</p><p>也可以使用聚焦搜索「Prompt Dock」打开应用。</p><p>如果直接粘贴需要权限，请打开应用设置 → Mac 直接粘贴权限，按提示完成系统授权。</p>'));
 run('/usr/bin/productbuild', ['--distribution', distribution, '--resources', resources, '--package-path', work, packageFile]);
 const expanded = path.join(work, 'expanded');

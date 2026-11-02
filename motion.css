@@ -1,0 +1,407 @@
+/* =====================================================================
+   Prompt Dock · motion.css —— 过渡动画增强层
+   ---------------------------------------------------------------------
+   · 在 styles.css 之后加载；只改“怎么动”，不改布局、配色和交互逻辑。
+   · 配合 motion.js 使用（启动静音、右栏宽度冻结、小窗切换、标签树动画）。
+     不加载 motion.js 也能工作，只是少了这几项。
+   · 依赖 Chromium 117+ 特性（@starting-style、allow-discrete、linear()），
+     Electron 37（Chromium 138）全部支持。
+   ===================================================================== */
+
+:root {
+  /* 曲线 */
+  --motion-ease-out: cubic-bezier(.22, 1, .36, 1);       /* 进入：快起、柔停 */
+  --motion-ease-in: cubic-bezier(.55, 0, 1, .45);        /* 退出：干脆离场 */
+  --motion-ease-in-out: cubic-bezier(.65, 0, .35, 1);
+  --motion-ease-drawer: cubic-bezier(.32, .72, 0, 1);    /* 面板/抽屉：接近 iOS 抽屉手感 */
+  --motion-ease-spring: linear(0, .047 4%, .16 8%, .304 12%, .453 15%, .594 19%, .716 23%, .817 27%, .895 31%, .953 35%, .992 38%, 1.018 42%, 1.032 46%, 1.038 50%, 1.038 54%, 1.035 58%, 1.03 62%, 1.024 65%, 1.019 69%, 1.013 73%, 1.009 77%, 1.006 81%, 1.003 85%, 1.001 88%, 1 92%, .999 96%, 1);
+  /* 时长 */
+  --motion-fast: 140ms;
+  --motion-base: 200ms;
+  --motion-fade: 220ms;
+  --motion-pane: 320ms;
+  --motion-drawer: 340ms;
+  --motion-pop: 380ms;
+}
+
+/* ---------------------------------------------------------------------
+   0. 全局开关（由 motion.js 添加）
+   motion-booting：启动时先静音，避免读到设置后左右栏“动一下”
+   motion-instant：小窗切换时内容隐藏期间，所有布局瞬时完成
+   --------------------------------------------------------------------- */
+body.motion-booting .app-shell,
+body.motion-booting .app-shell *,
+body.motion-booting .app-shell::after,
+body.motion-booting .app-shell *::before,
+body.motion-booting .app-shell *::after {
+  transition: none !important;
+  animation: none !important;
+}
+/* 拖动窗口边缘时，网格轨道跟手，不做补间（否则会“拖泥带水”） */
+body.window-resizing:not(.window-morphing) .app-shell,
+body.pane-resizing .app-shell { transition: none !important; }
+
+/* ---------------------------------------------------------------------
+   1. 三栏网格：更长一点的时长 + 抽屉曲线
+   --------------------------------------------------------------------- */
+.app-shell {
+  overflow-x: clip;               /* 面板滑出时不产生横向溢出 */
+  transition: grid-template-columns var(--motion-pane) var(--motion-ease-drawer);
+}
+
+/* 顺手修复：小窗口(≤900px)媒体查询里的 left/right-collapsed 规则会覆盖小窗模式的单列布局，
+   导致“收起过左栏/右栏后进入小窗，列表被挤成一条”。小窗模式始终单列。 */
+.app-shell.compact-mode { grid-template-columns: minmax(0, 1fr) !important; }
+
+/* ---------------------------------------------------------------------
+   2. 左栏：保持自身宽度、贴右对齐 → 收起时整体向左“滑出”，而不是被压扁
+   --------------------------------------------------------------------- */
+.app-shell:not(.compact-mode) .sidebar {
+  width: var(--sidebar-layout-width, var(--left-pane-track));
+  justify-self: unsafe end;
+  transition: opacity var(--motion-fade) var(--motion-ease-out), visibility 0s;
+}
+.app-shell.left-collapsed:not(.compact-mode) .sidebar {
+  /* 原样式在收起时把内边距/边框清零，滑动过程中内容会跳，这里保留 */
+  padding-left: 13px;
+  padding-right: 13px;
+  border-right: 1px solid var(--line);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--motion-base) var(--motion-ease-in), visibility 0s linear var(--motion-pane);
+}
+
+/* ---------------------------------------------------------------------
+   3. 右栏（宽窗口）：
+   · 原规则收起时最后一列从 minmax(330px,.92fr) 变成 0，类型不同无法插值 → 瞬间跳变。
+     这里换成同构的 minmax(0px, 0fr)，网格就能平滑过渡。
+   · 动画期间预览区冻结宽度、贴左对齐 → 向右“滑出/滑入”，内容不重排。
+     （冻结宽度 --preview-freeze-width 和 .right-pane-animating 由 motion.js 设置）
+   --------------------------------------------------------------------- */
+@media (min-width: 901px) {
+  .app-shell.right-collapsed:not(.compact-mode, .vocabulary-mode) {
+    grid-template-columns: var(--left-pane-track) 6px minmax(350px, 1fr) 0px var(--right-pane-track-collapsed, minmax(0px, 0fr));
+  }
+  .app-shell.left-collapsed.right-collapsed:not(.compact-mode, .vocabulary-mode) {
+    grid-template-columns: 0px 0px minmax(350px, 1fr) 0px var(--right-pane-track-collapsed, minmax(0px, 0fr));
+  }
+  .app-shell:not(.compact-mode, .vocabulary-mode) .preview {
+    transition: opacity var(--motion-fade) var(--motion-ease-out), visibility 0s;
+  }
+  .app-shell:is(.right-collapsed, .right-pane-animating):not(.compact-mode, .vocabulary-mode) .preview {
+    width: max(100%, var(--preview-freeze-width, 100%));
+    justify-self: start;
+  }
+  .app-shell.right-collapsed:not(.compact-mode, .vocabulary-mode) .preview {
+    padding-left: 20px;
+    padding-right: 20px;
+    border-left: 1px solid var(--line);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity var(--motion-base) var(--motion-ease-in), visibility 0s linear var(--motion-pane);
+  }
+}
+
+/* 窄窗口（≤900px）：左栏同样滑动；右栏是浮层，改为从右侧滑入/滑出 */
+@media (max-width: 900px) {
+  .app-shell:not(.compact-mode) { --sidebar-layout-width: 165px; }
+  .app-shell:not(.compact-mode, .vocabulary-mode) .preview {
+    transition:
+      opacity var(--motion-fade) var(--motion-ease-out),
+      transform var(--motion-pane) var(--motion-ease-drawer),
+      display var(--motion-pane) allow-discrete;
+  }
+  .app-shell.right-collapsed:not(.compact-mode, .vocabulary-mode) .preview {
+    padding-left: 20px;
+    padding-right: 20px;
+    border-left: 1px solid var(--line);
+    opacity: 0;
+    transform: translateX(28px);
+    transition:
+      opacity var(--motion-base) var(--motion-ease-in),
+      transform var(--motion-base) var(--motion-ease-in),
+      display var(--motion-base) allow-discrete;
+  }
+  @starting-style {
+    .app-shell:not(.compact-mode, .vocabulary-mode) .preview { opacity: 0; transform: translateX(28px); }
+  }
+}
+
+/* ---------------------------------------------------------------------
+   4. 小窗模式的导航抽屉：抽屉曲线、关闭后 visibility:hidden（不可 Tab 进入）、轻遮罩
+   --------------------------------------------------------------------- */
+.app-shell.compact-mode .sidebar {
+  transform: translateX(calc(-100% - 24px));
+  visibility: hidden;
+  transition:
+    transform var(--motion-drawer) var(--motion-ease-drawer),
+    opacity var(--motion-base) var(--motion-ease-in) 60ms,
+    visibility 0s linear var(--motion-drawer);
+}
+.app-shell.compact-mode.compact-left-open .sidebar {
+  transform: translateX(0);
+  visibility: visible;
+  transition:
+    transform var(--motion-drawer) var(--motion-ease-drawer),
+    opacity var(--motion-fast) var(--motion-ease-out),
+    visibility 0s;
+}
+/* 遮罩只做视觉提示，不拦截点击（保持原来“点外面关闭且点击照常生效”的行为） */
+.app-shell.compact-mode::after {
+  content: "";
+  position: fixed;
+  inset: 44px 0 0;
+  z-index: 11;
+  background: rgba(31, 29, 25, .16);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-drawer) var(--motion-ease-out);
+}
+.app-shell.compact-mode.compact-left-open::after { opacity: 1; }
+
+/* ---------------------------------------------------------------------
+   5. 标准窗口 ⇄ 超小置顶窗口：内容淡出 → 窗口改尺寸 → 内容淡入并轻微归位
+   （窗口尺寸由主进程瞬间改变，Windows 上无法做原生动画，所以把“跳变”藏在淡出里）
+   --------------------------------------------------------------------- */
+body.window-morphing .app-shell { transition: opacity 100ms linear !important; }
+body.window-morphing .app-shell,
+body.window-morphing .app-shell * { pointer-events: none !important; }
+body.window-morphing.morph-out .app-shell { opacity: 0; }
+body.window-morphing.morph-in .app-shell { transition: opacity 260ms var(--motion-ease-out) !important; }
+body.window-morphing.morph-in .app-shell > :is(.library, .vocabulary-workspace, .preview),
+body.window-morphing.morph-in .app-shell:not(.compact-mode) > .sidebar {
+  animation: motion-window-settle 360ms var(--motion-ease-out) both;
+}
+@keyframes motion-window-settle {
+  from { transform: translateY(8px) scale(.985); }
+  to { transform: none; }
+}
+
+/* motion-instant 必须写在上面这些规则之后 */
+body.motion-instant .app-shell,
+body.motion-instant .app-shell *,
+body.motion-instant .app-shell::after,
+body.motion-instant .app-shell *::before,
+body.motion-instant .app-shell *::after {
+  transition: none !important;
+  animation: none !important;
+}
+
+/* ---------------------------------------------------------------------
+   6. 对话框：淡入 + 轻微上浮放大（弹簧曲线），关闭时也有淡出；背景遮罩渐变
+   --------------------------------------------------------------------- */
+dialog {
+  opacity: 0;
+  transform: translateY(10px) scale(.97);
+  transition:
+    opacity 150ms var(--motion-ease-in),
+    transform 150ms var(--motion-ease-in),
+    overlay 150ms allow-discrete,
+    display 150ms allow-discrete;
+}
+dialog[open] {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity 200ms var(--motion-ease-out),
+    transform var(--motion-pop) var(--motion-ease-spring),
+    overlay var(--motion-pop) allow-discrete,
+    display var(--motion-pop) allow-discrete;
+}
+dialog::backdrop {
+  background-color: rgba(31, 29, 25, 0);
+  backdrop-filter: blur(0);
+  transition:
+    background-color 150ms var(--motion-ease-in),
+    backdrop-filter 150ms var(--motion-ease-in),
+    overlay 150ms allow-discrete,
+    display 150ms allow-discrete;
+}
+dialog[open]::backdrop {
+  background-color: rgba(31, 29, 25, .5);
+  backdrop-filter: blur(3px);
+  transition:
+    background-color 240ms var(--motion-ease-out),
+    backdrop-filter 240ms var(--motion-ease-out),
+    overlay var(--motion-pop) allow-discrete,
+    display var(--motion-pop) allow-discrete;
+}
+/* 图片查看器：更克制的缩放，保留原来更深的遮罩 */
+.image-lightbox:not([open]) { transform: scale(.985); }
+.image-lightbox[open]::backdrop { background-color: rgba(17, 16, 14, .78); backdrop-filter: blur(8px); }
+@starting-style {
+  dialog[open] { opacity: 0; transform: translateY(10px) scale(.97); }
+  dialog[open]::backdrop { background-color: rgba(31, 29, 25, 0); backdrop-filter: blur(0); }
+  .image-lightbox[open] { opacity: 0; transform: scale(.985); }
+  .image-lightbox[open]::backdrop { background-color: rgba(17, 16, 14, 0); backdrop-filter: blur(0); }
+}
+
+/* ---------------------------------------------------------------------
+   7. 菜单 / 浮层 / Toast
+   右键菜单和版本浮层的位置是 JS 用 getBoundingClientRect 算的，
+   所以只用位移+透明度（不缩放），保证测量尺寸不变。
+   --------------------------------------------------------------------- */
+.floating-context-menu {
+  transition:
+    opacity var(--motion-fast) var(--motion-ease-out),
+    transform var(--motion-base) var(--motion-ease-out),
+    display var(--motion-fast) allow-discrete;
+}
+.floating-context-menu.hidden {
+  opacity: 0;
+  transform: translateY(-3px);
+  pointer-events: none;
+  transition-duration: 110ms;
+  transition-timing-function: var(--motion-ease-in);
+}
+.variant-popover {
+  transition: opacity 160ms var(--motion-ease-out), transform 220ms var(--motion-ease-out);
+}
+.sort-menu-options {
+  transform-origin: top right;
+  transition:
+    opacity 150ms var(--motion-ease-out),
+    transform 240ms var(--motion-ease-out),
+    display 150ms allow-discrete;
+}
+.sort-menu-options.hidden {
+  opacity: 0;
+  transform: translateY(-4px) scale(.97);
+  pointer-events: none;
+  transition-duration: 110ms;
+  transition-timing-function: var(--motion-ease-in);
+}
+.sort-menu-button svg,
+.tag-tree-toggle .ui-icon { transition: transform 240ms var(--motion-ease-out); }
+
+/* Toast：弹簧上浮进入；退出 160ms（原代码 190ms 后 hidePopover，必须在此之前结束） */
+.toast {
+  transform: translate(-50%, 10px) scale(.98);
+  transition: opacity 160ms var(--motion-ease-in), transform 160ms var(--motion-ease-in);
+}
+.toast.show {
+  transform: translate(-50%, 0) scale(1);
+  transition: opacity 200ms var(--motion-ease-out), transform 420ms var(--motion-ease-spring);
+}
+
+@starting-style {
+  .floating-context-menu { opacity: 0; transform: translateY(-4px); }
+  .variant-popover { opacity: 0; transform: translateY(-4px); }
+  .sort-menu-options { opacity: 0; transform: translateY(-4px) scale(.97); }
+  .toast.toast:popover-open { opacity: 0; transform: translate(-50%, 10px) scale(.98); }
+}
+
+/* ---------------------------------------------------------------------
+   8. 视图切换与出现的元素：Prompt ⇄ 词库、批量工具栏、更新提示等
+   --------------------------------------------------------------------- */
+.vocabulary-workspace,
+.app-shell:not(.vocabulary-mode) .library {
+  transition: opacity 240ms var(--motion-ease-out), transform var(--motion-pane) var(--motion-ease-out);
+}
+#promptSidebarNav,
+#promptTagSection,
+#promptUtilityNav,
+#vocabularySidebarNav {
+  transition: opacity 240ms var(--motion-ease-out), transform 300ms var(--motion-ease-out);
+}
+.batch-toolbar,
+.vocabulary-composer,
+.vocabulary-batch-toolbar,
+.update-banner {
+  transition: opacity 220ms var(--motion-ease-out), transform var(--motion-pop) var(--motion-ease-spring);
+}
+@starting-style {
+  .vocabulary-workspace,
+  .app-shell:not(.vocabulary-mode) .library { opacity: 0; transform: translateY(6px); }
+  .app-shell:not(.vocabulary-mode, .compact-mode) .preview { opacity: 0; }
+  #promptSidebarNav,
+  #promptTagSection,
+  #promptUtilityNav,
+  #vocabularySidebarNav { opacity: 0; transform: translateY(4px); }
+  .batch-toolbar,
+  .vocabulary-composer,
+  .vocabulary-batch-toolbar { opacity: 0; transform: translateY(10px); }
+  .update-banner { opacity: 0; transform: translateY(12px); }
+}
+
+/* Prompt / 词库 分段切换：选中底块滑动 */
+.sidebar-mode-switch { position: relative; isolation: isolate; }
+.sidebar-mode-switch::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc((100% - 12px) / 2);
+  border-radius: 8px;
+  background: #fffdf9;
+  box-shadow: 0 2px 8px rgba(48, 39, 30, .08);
+  transition: transform var(--motion-pane) var(--motion-ease-drawer), opacity var(--motion-base) var(--motion-ease-out);
+}
+.sidebar-mode-switch:has(#vocabularyNavItem.active)::before { transform: translateX(calc(100% + 4px)); }
+.sidebar-mode-switch:not(:has(button.active))::before { opacity: 0; }
+.sidebar-mode-switch button.active { background: transparent; box-shadow: none; }
+
+/* 标签树收起时的“残影”（motion.js 插入，动画结束即移除） */
+.motion-ghost { pointer-events: none; }
+
+/* ---------------------------------------------------------------------
+   9. 微交互：悬停/选中的颜色变化不再“硬切”
+   --------------------------------------------------------------------- */
+.titlebar-tools button,
+.window-actions button,
+.nav-item,
+.vocabulary-collection,
+.tag-tree-toggle,
+.icon-btn,
+.primary,
+.secondary,
+.danger-button,
+.sort-menu-button,
+.sort-menu-options button,
+.floating-context-menu button,
+.variant-popover button,
+.variant-option,
+.sidebar-mode-switch button {
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    color var(--motion-fast) var(--motion-ease-out),
+    border-color var(--motion-fast) var(--motion-ease-out),
+    box-shadow var(--motion-base) var(--motion-ease-out),
+    opacity var(--motion-fast) var(--motion-ease-out);
+}
+.prompt-card {
+  transition:
+    transform 180ms var(--motion-ease-out),
+    background-color var(--motion-fast) var(--motion-ease-out),
+    border-color var(--motion-fast) var(--motion-ease-out),
+    box-shadow 220ms var(--motion-ease-out);
+}
+.prompt-card:active { transform: translateY(0) scale(.994); transition-duration: 80ms; }
+
+/* ---------------------------------------------------------------------
+   10. 系统开启“减少动态效果”时：动画几乎瞬时完成（JS 侧同样会跳过）
+   --------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 1ms;
+    --motion-base: 1ms;
+    --motion-fade: 1ms;
+    --motion-pane: 1ms;
+    --motion-drawer: 1ms;
+    --motion-pop: 1ms;
+  }
+  .app-shell,
+  .app-shell *,
+  .app-shell::after,
+  dialog,
+  dialog::backdrop,
+  .toast,
+  .floating-context-menu,
+  .variant-popover {
+    transition-duration: 1ms !important;
+    transition-delay: 0s !important;
+    animation-duration: 1ms !important;
+  }
+}

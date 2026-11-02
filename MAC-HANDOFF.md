@@ -2,7 +2,7 @@
 
 [返回首页](README.md) · [Mac 使用说明](docs/MAC-USER-GUIDE.md) · [测试说明](docs/MAC-VALIDATION.md)
 
-Mac 适配位于 [`mac-support`](https://github.com/Kesister/prompt-dock/tree/mac-support) 分支。项目沿用 Windows/macOS 共享源码，通过平台条件分支处理系统集成。Mac v0.11.2 支持 Apple Silicon、macOS 12 及以上版本。
+Mac 适配位于 [`mac-support`](https://github.com/Kesister/prompt-dock/tree/mac-support) 分支。项目沿用 Windows/macOS 共享源码，通过平台条件分支处理系统集成。Mac v0.11.4 本地同步版支持 Apple Silicon、macOS 12 及以上版本。
 
 ## 运行项目
 
@@ -43,7 +43,7 @@ node scripts/build-mac-installer.js "/absolute/Prompt Dock.app" "/absolute/outpu
 
 ## 版本发布
 
-安装包及校验文件通过 Releases 分发，源码历史不保存安装包、个人库、备份或测试输出。Mac 标签使用 `mac-v版本号`，Windows 的 `v*` 标签沿用现有发布工作流。平台补丁独立编号：当前 Windows 为 v0.11.1，Mac 为 v0.11.2。
+安装包及校验文件通过 Releases 分发，源码历史不保存安装包、个人库、备份或测试输出。Mac 标签使用 `mac-v版本号`，Windows 的 `v*` 标签沿用现有发布工作流。平台补丁独立编号：Windows 已发布 v0.11.4；Mac 本地同步版为 v0.11.4（build 11401），尚未发布，现有公开 Mac 版本仍为 v0.11.2。
 
 Mac Release 延续预览通道，发布时设置 `prerelease=true`、`make_latest=false`，保留 Windows 的 Latest 入口。Mac 更新检查从 Releases 列表中选择对应架构的 Mac 安装包，支持 `mac-v` 标签，优先下载 PKG；不会读取 Windows 的 `latest.yml`。
 

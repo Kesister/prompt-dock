@@ -5,6 +5,7 @@ const core = require("./slash-core");
 const preview = require("./slash-preview");
 const { pasteMessage } = require('./mac-input');
 const IS_MAC = process.platform === 'darwin';
+const { ShortcutRegistration } = require("./shortcut-registration");
 const copyReasons = {
   "caret-unavailable":"暂未取得可验证的光标位置，本次仅复制；可关闭后重新唤出。",
   "caret-unstable":"光标位置尚未稳定，本次仅复制；可关闭后重新唤出。",
@@ -18,7 +19,8 @@ class SlashController {
     this.macInput = macInput;
     this.openMacAccessibility = openMacAccessibility;
     this.readState=readState;this.recordUse=recordUse;this.onStatus=onStatus;this.config=core.settings();
-    this.paused=false;this.helper=null;this.window=null;this.view=null;this.activeShortcut="";this.message="";this.ready=false;this.pending=false;this.previewEnabled=true;
+    this.paused=false;this.helper=null;this.window=null;this.view=null;this.message="";this.ready=false;this.pending=false;this.previewEnabled=true;
+    this.shortcutRegistration=new ShortcutRegistration({globalShortcut,callback:()=>this.openPalette(),onChange:()=>this.onStatus?.()});
     ipcMain.on("slash:ready",(e,options)=>{if(e.sender===this.window?.webContents){this.previewEnabled=options?.previewEnabled!==false;this.ready=true;if(this.view)this.show(true,false);this.publish();this.reveal();}});
     ipcMain.on("slash:action",(e,action)=>{if(e.sender===this.window?.webContents)this.action(action);});
   }
@@ -26,19 +28,24 @@ class SlashController {
   send(value){if(this.helper?.stdin.writable)this.helper.stdin.write(JSON.stringify(value)+"\n");}
   invalidate(){this.sessionPrompts=null;}
   search(query){if(!this.sessionPrompts)this.sessionPrompts=this.readState().prompts;return core.search(this.sessionPrompts,query);}
-  status(){return {enabled:this.config.enabled,paused:this.paused,running:IS_MAC ? Boolean(this.config.enabled&&!this.paused&&this.macInput&&!this.macInput.stopped) : Boolean(this.helper),message:this.message,shortcut:this.activeShortcut};}
-  async configure(raw, reserved=[]) {
+  get activeShortcut(){return this.shortcutRegistration.shortcut;}
+  status(){
+    const binding=this.shortcutRegistration;
+    const message=binding.error==="unavailable"?"快捷键暂时注册失败，可能被其他程序占用；正在自动重试。":binding.error==="invalid"?"快捷键格式无效，请在设置中重新录制。":this.message;
+    const running=IS_MAC ? Boolean(this.config.enabled&&!this.paused&&this.macInput&&!this.macInput.stopped) : Boolean(this.helper);
+    return {enabled:this.config.enabled,paused:this.paused,running,message,shortcut:this.activeShortcut,shortcutRegistered:binding.isRegistered(),retrying:binding.retryTimer!==null};
+  }
+  recoverShortcut(){if(this.config.enabled)return this.shortcutRegistration.recover();}
+  async configure(raw, reserved=[], {restore=false}={}) {
     const next=core.settings(raw);if(!['win32','darwin'].includes(process.platform)&&next.enabled)return {ok:false,message:"当前系统暂不支持快捷调用。"};
     if(next.enabled&&next.shortcut&&reserved.some(x=>String(x).toLowerCase()===next.shortcut.toLowerCase()))return {ok:false,message:"调用快捷键不能与全局唤出或新建快捷键相同。"};
-    if(next.enabled&&next.shortcut&&next.shortcut!==this.activeShortcut){
-      let ok=false;try{ok=globalShortcut.register(next.shortcut,()=>this.openPalette());}catch{}
-      if(!ok)return {ok:false,message:"调用快捷键无效或已被占用，请更换。"};
-    }
-    if(this.activeShortcut&&(!next.enabled||next.shortcut!==this.activeShortcut))globalShortcut.unregister(this.activeShortcut);
-    this.activeShortcut=next.enabled?next.shortcut:"";this.config=next;this.close();
+    const shortcut=next.enabled?next.shortcut:"";
+    const result=restore?this.shortcutRegistration.restore(shortcut):this.shortcutRegistration.set(shortcut);
+    if(!result.ok&&!restore)return {ok:false,message:"调用快捷键无效或已被占用，请更换。"};
+    this.config=next;this.close();
     if(!next.enabled){this.paused=false;this.stop();}
     else if(!this.paused){if(this.helper)this.send({type:"config",...next});else this.start();}
-    this.onStatus?.();return {ok:true,...this.status()};
+    this.onStatus?.();return {ok:result.ok,...this.status()};
   }
   start(){
     // Load the hidden Mac palette before the hotkey, including its renderer.
@@ -172,6 +179,6 @@ class SlashController {
     // Only the focus handoff changes. beta.2 still validates and pastes itself.
     this.window.hide();this.send({type:"commit",session,query:this.view.query});
   }
-  dispose(){clearTimeout(this.commitTimer);this.stop();if(this.activeShortcut)globalShortcut.unregister(this.activeShortcut);this.window?.destroy();}
+  dispose(){clearTimeout(this.commitTimer);this.shortcutRegistration.dispose();this.stop();this.window?.destroy();}
 }
 module.exports = { SlashController };

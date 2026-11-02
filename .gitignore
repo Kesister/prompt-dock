@@ -8,6 +8,11 @@
 !/author-links.js
 !/update-controller.js
 !/update-renderer.js
+!/motion.js
+!/motion.css
+!/window-transition.js
+!/window-transition-preload.js
+!/window-transition.html
 !/.github/
 !/preload.js
 !/renderer.js
@@ -23,6 +28,8 @@
 !/CONTRIBUTING.md
 !/docs/
 /docs/*
+!/docs/index.html
+!/docs/.nojekyll
 !/docs/USER-GUIDE.md
 !/docs/DEVELOPMENT.md
 !/docs/NOTION-SKILL.md

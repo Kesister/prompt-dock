@@ -20,6 +20,12 @@ let recordingShortcut = null;
 let variantPopoverTimer = null;
 let compactSidebarOpen = false;
 let compactSizeSaveTimer = null;
+let compactModeSwitching = false;
+let paneLayoutAnimation = null;
+let paneResizeFrame = 0;
+let layoutRevision = 0;
+const layoutSettingNames = ["leftCollapsed", "rightCollapsed", "compactMode", "compactWindowSize", "alwaysOnTop", "alwaysOnTopBeforeCompact", "paneWidths"];
+const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 let tagContextName = "";
 let tagContextButton = null;
 let tagMergeSourceName = "";
@@ -203,8 +209,15 @@ function selectedVersion(prompt, variantId = activeVariantId) {
 
 function persist() {
   const task = persistQueue.catch(() => {}).then(async () => {
+    const savingLayoutRevision = layoutRevision;
     const result = await window.promptDock.saveState(state);
-    if (result?.state) state = result.state;
+    if (result?.state) {
+      // A slower save may finish after another layout action. Keep that newer intent.
+      if (savingLayoutRevision !== layoutRevision) {
+        for (const name of layoutSettingNames) result.state.settings[name] = state.settings[name];
+      }
+      state = result.state;
+    }
     return result;
   });
   persistQueue = task;
@@ -227,6 +240,8 @@ function applyLayout() {
   const shell = $(".app-shell");
   const compactMode = Boolean(state.settings.compactMode);
   const vocabularyMode = appMode === "vocabulary";
+  if (shell.classList.contains("compact-mode") !== compactMode
+    || shell.classList.contains("vocabulary-mode") !== vocabularyMode) stopPaneAnimation();
   shell.classList.toggle("vocabulary-mode", vocabularyMode);
   applyPaneWidths();
   shell.classList.toggle("left-collapsed", Boolean(state.settings.leftCollapsed));
@@ -244,6 +259,61 @@ function applyLayout() {
   $("#pinBtn").disabled = Boolean(state.settings.compactMode);
   $("#pinBtn").title = state.settings.compactMode ? "超小窗口模式会始终置顶" : "切换窗口置顶";
   if (!state.settings.compactMode) hideVariantPopover();
+}
+
+function stopPaneAnimation() {
+  const shell = $(".app-shell");
+  const scroll = $(".preview-scroll");
+  const scrollTop = scroll?.scrollTop;
+  const wasMoving = shell.classList.contains("pane-transition");
+  paneLayoutAnimation?.cancel();
+  paneLayoutAnimation = null;
+  shell.classList.remove("pane-transition");
+  if (wasMoving && scroll) scroll.scrollTop = scrollTop;
+}
+
+function animatePaneLayout(change) {
+  const shell = $(".app-shell");
+  if (window.PromptDockMotion) {
+    // CSS owns the grid tracks; do not also animate them with WAAPI.
+    stopPaneAnimation();
+    shell.style.removeProperty("--sidebar-content-width");
+    shell.style.removeProperty("--preview-content-width");
+    change();
+    return;
+  }
+  // Resolved pixel tracks interpolate even when the default right track uses fr.
+  // Capture the current presentation before cancelling, so a reversal stays continuous.
+  const before = getComputedStyle(shell).gridTemplateColumns;
+  const sidebarWidth = $(".sidebar").getBoundingClientRect().width;
+  const previewWidth = $("#previewPanel").getBoundingClientRect().width;
+  const scroll = $(".preview-scroll");
+  const scrollTop = scroll?.scrollTop;
+  stopPaneAnimation();
+  change();
+  const after = getComputedStyle(shell).gridTemplateColumns;
+  const lockContentWidth = (selector, property, previousWidth) => {
+    const panel = $(selector);
+    const style = getComputedStyle(panel);
+    const inset = ["paddingLeft", "paddingRight", "borderLeftWidth", "borderRightWidth"]
+      .reduce((total, name) => total + parseFloat(style[name]), 0);
+    const targetWidth = panel.getBoundingClientRect().width;
+    const width = targetWidth > inset + 1 ? targetWidth : previousWidth;
+    shell.style.setProperty(property, `${Math.max(0, width - inset)}px`);
+  };
+  lockContentWidth(".sidebar", "--sidebar-content-width", sidebarWidth);
+  lockContentWidth("#previewPanel", "--preview-content-width", previewWidth);
+  if (scroll) scroll.scrollTop = scrollTop;
+  if (reducedMotion.matches || before === after || state.settings.compactMode) return;
+  shell.classList.add("pane-transition");
+  if (scroll) scroll.scrollTop = scrollTop;
+  const animation = shell.animate([{ gridTemplateColumns: before }, { gridTemplateColumns: after }], {
+    duration: 240, easing: getComputedStyle(shell).getPropertyValue("--motion-ease").trim()
+  });
+  paneLayoutAnimation = animation;
+  animation.finished.then(() => {
+    if (paneLayoutAnimation === animation) stopPaneAnimation();
+  }, () => {});
 }
 
 function clampPaneWidth(side, requested) {
@@ -276,6 +346,8 @@ function applyPaneWidths() {
 }
 
 function setPaneWidth(side, requested) {
+  stopPaneAnimation();
+  layoutRevision++;
   state.settings.paneWidths ||= { left: 190, right: null };
   const width = clampPaneWidth(side, requested);
   state.settings.paneWidths[side] = width;
@@ -297,6 +369,7 @@ function bindPaneResizer(side) {
     handle.setPointerCapture(event.pointerId);
     handle.classList.add("dragging");
     document.body.classList.add("pane-resizing");
+    stopPaneAnimation();
     const move = (moveEvent) => {
       const delta = moveEvent.clientX - startX;
       setPaneWidth(side, startWidth + (side === "left" ? delta : -delta));
@@ -322,6 +395,8 @@ function bindPaneResizer(side) {
     await persist();
   });
   handle.addEventListener("dblclick", async () => {
+    stopPaneAnimation();
+    layoutRevision++;
     state.settings.paneWidths ||= { left: 190, right: null };
     state.settings.paneWidths[side] = side === "left" ? 190 : null;
     applyPaneWidths();
@@ -336,8 +411,12 @@ function setCompactSidebarOpen(open) {
 }
 
 async function toggleLayoutSetting(name) {
-  state.settings[name] = !state.settings[name];
-  applyLayout();
+  if (compactModeSwitching) return;
+  animatePaneLayout(() => {
+    layoutRevision++;
+    state.settings[name] = !state.settings[name];
+    applyLayout();
+  });
   await persist();
 }
 
@@ -1776,6 +1855,7 @@ async function openAuthorDialog() {
 $("#minimizeBtn").addEventListener("click", () => window.promptDock.minimize());
 $("#hideBtn").addEventListener("click", () => window.promptDock.hide());
 $("#toggleLeftBtn").addEventListener("click", () => {
+  if (compactModeSwitching) return;
   if (state.settings.compactMode) {
     setCompactSidebarOpen(!compactSidebarOpen);
     return;
@@ -1784,28 +1864,61 @@ $("#toggleLeftBtn").addEventListener("click", () => {
 });
 $("#toggleRightBtn").addEventListener("click", () => toggleLayoutSetting("rightCollapsed"));
 $("#compactBtn").addEventListener("click", async () => {
-  const next = !state.settings.compactMode;
-  compactSidebarOpen = false;
-  if (!next) {
-    const bounds = await window.promptDock.getWindowBounds();
-    state.settings.compactWindowSize = { width: bounds.width, height: bounds.height };
+  if (compactModeSwitching) return;
+  compactModeSwitching = true;
+  $("#compactBtn").disabled = true;
+  stopPaneAnimation();
+  clearTimeout(compactSizeSaveTimer);
+  const previous = {
+    compactMode: state.settings.compactMode,
+    alwaysOnTop: state.settings.alwaysOnTop,
+    alwaysOnTopBeforeCompact: state.settings.alwaysOnTopBeforeCompact
+  };
+  let resized = false;
+  try {
+    const next = !state.settings.compactMode;
+    compactSidebarOpen = false;
+    if (!next) {
+      const bounds = await window.promptDock.getWindowBounds();
+      state.settings.compactWindowSize = { width: bounds.width, height: bounds.height };
+    }
+    const switchWindow = async () => {
+      // The motion layer covers the resize with a content fade; no screenshot proxy.
+      const result = await window.promptDock.setCompactMode(next, state.settings.compactWindowSize, false, null);
+      if (!result.ok) throw new Error("window-mode");
+      resized = true;
+      if (next) {
+        state.settings.alwaysOnTopBeforeCompact = Boolean(state.settings.alwaysOnTop);
+        state.settings.alwaysOnTop = true;
+      } else {
+        state.settings.alwaysOnTop = Boolean(state.settings.alwaysOnTopBeforeCompact);
+      }
+      state.settings.compactMode = next;
+      if (result.compactWindowSize) state.settings.compactWindowSize = result.compactWindowSize;
+      layoutRevision++;
+      applyLayout();
+      await window.promptDock.setAlwaysOnTop(state.settings.alwaysOnTop);
+    };
+    if (window.PromptDockMotion) await window.PromptDockMotion.windowMorph(switchWindow);
+    else await switchWindow();
+    await persist();
+    applyLayout();
+    toast(next ? "已进入超小置顶模式" : "已恢复标准窗口");
+  } catch {
+    if (!resized) {
+      Object.assign(state.settings, previous);
+      layoutRevision++;
+      applyLayout();
+    }
+    toast("暂时无法切换窗口模式，请重试。");
+  } finally {
+    compactModeSwitching = false;
+    $("#compactBtn").disabled = false;
   }
-  if (next) {
-    state.settings.alwaysOnTopBeforeCompact = Boolean(state.settings.alwaysOnTop);
-    state.settings.alwaysOnTop = true;
-  } else {
-    state.settings.alwaysOnTop = Boolean(state.settings.alwaysOnTopBeforeCompact);
-  }
-  state.settings.compactMode = next;
-  const result = await window.promptDock.setCompactMode(next, state.settings.compactWindowSize);
-  if (result.compactWindowSize) state.settings.compactWindowSize = result.compactWindowSize;
-  await window.promptDock.setAlwaysOnTop(state.settings.alwaysOnTop);
-  await persist();
-  applyLayout();
-  toast(next ? "已进入超小置顶模式" : "已恢复标准窗口");
 });
 $("#pinBtn").addEventListener("click", async () => {
-  if (state.settings.compactMode) return;
+  if (compactModeSwitching || state.settings.compactMode) return;
+  layoutRevision++;
   state.settings.alwaysOnTop = !state.settings.alwaysOnTop;
   await window.promptDock.setAlwaysOnTop(state.settings.alwaysOnTop);
   await persist();
@@ -2168,7 +2281,22 @@ $("#tagDeleteForm").addEventListener("submit", async (event) => {
   toast(`已删除标签“${tagDisplayLabel(source)}”，更新 ${changed} 条 Prompt`);
 });
 $$("dialog").forEach((dialog) => {
+  let backdropPointerId = null;
+  const isBackdrop = (event) => {
+    if (event.target !== dialog) return false;
+    const rect = dialog.getBoundingClientRect();
+    return event.clientX < rect.left || event.clientX > rect.right
+      || event.clientY < rect.top || event.clientY > rect.bottom;
+  };
+  dialog.addEventListener("pointerdown", (event) => {
+    // A selection dragged out of an input can produce a click on the dialog.
+    // Only a gesture that also began on the backdrop may dismiss it.
+    backdropPointerId = event.button === 0 && event.isPrimary !== false && isBackdrop(event)
+      ? event.pointerId : null;
+  }, true);
+  dialog.addEventListener("pointercancel", () => { backdropPointerId = null; }, true);
   dialog.addEventListener("close", () => {
+    backdropPointerId = null;
     if (dialog.id === "settingsDialog") recordingShortcut = null;
     if (dialog.id === "editorDialog") {
       $("#editorForm").scrollTop = 0;
@@ -2177,11 +2305,10 @@ $$("dialog").forEach((dialog) => {
     if (dialog.id === "imageLightbox") hideFloatingMenus();
   });
   dialog.addEventListener("click", (event) => {
-    if (event.target !== dialog) return;
-    const rect = dialog.getBoundingClientRect();
-    const inside = event.clientX >= rect.left && event.clientX <= rect.right
-      && event.clientY >= rect.top && event.clientY <= rect.bottom;
-    if (!inside) dialog.close();
+    const beganOnBackdrop = backdropPointerId !== null
+      && (event.pointerId === undefined || event.pointerId === backdropPointerId);
+    backdropPointerId = null;
+    if (beganOnBackdrop && event.button === 0 && isBackdrop(event)) dialog.close();
   });
 });
 $("#searchInput").addEventListener("input", () => {
@@ -2452,7 +2579,7 @@ $("#recordSlashShortcutBtn").addEventListener("click", () => {
   $("#slashShortcutHint").classList.remove("error");
 });
 function renderSlashStatus(status) {
-  $("#slashStatusHint").textContent = status.message || (!status.enabled ? "当前：已关闭，不监听输入" : status.paused ? "当前：临时暂停（可在托盘恢复）" : status.running ? "当前：已开启，可在托盘临时暂停" : "当前：助手未运行");
+  $("#slashStatusHint").textContent = status.message || (!status.enabled ? "当前：已关闭，不监听输入" : status.paused ? "当前：临时暂停（可在托盘恢复）" : status.shortcut && status.shortcutRegistered === false ? "当前：快捷键尚未注册成功" : status.running ? "当前：已开启，可在托盘临时暂停" : "当前：助手未运行");
 }
 window.promptDock.onSlashStatus(status => { if (state && status.config) state.settings.slash = status.config; renderSlashStatus(status); });
 async function refreshMacAccessibility() {
@@ -2652,15 +2779,35 @@ bindPaneResizer("left");
 bindPaneResizer("right");
 
 window.addEventListener("resize", () => {
-  applyPaneWidths();
-  if (!state?.settings?.compactMode) return;
+  if (compactModeSwitching) return;
+  stopPaneAnimation();
+  cancelAnimationFrame(paneResizeFrame);
+  paneResizeFrame = requestAnimationFrame(applyPaneWidths);
+  if (compactModeSwitching || !state?.settings?.compactMode) return;
   clearTimeout(compactSizeSaveTimer);
   compactSizeSaveTimer = setTimeout(async () => {
-    if (!state?.settings?.compactMode) return;
+    if (compactModeSwitching || !state?.settings?.compactMode) return;
     const bounds = await window.promptDock.getWindowBounds();
+    if (compactModeSwitching || !state?.settings?.compactMode) return;
     state.settings.compactWindowSize = { width: bounds.width, height: bounds.height };
+    layoutRevision++;
     await persist();
   }, 250);
+});
+
+reducedMotion.addEventListener("change", () => {
+  if (!reducedMotion.matches) return;
+  stopPaneAnimation();
+});
+
+window.promptDock.onWindowTransitionLayout(async token => {
+  applyLayout();
+  document.documentElement.getBoundingClientRect();
+  await Promise.race([
+    new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+    new Promise(resolve => setTimeout(resolve, 64))
+  ]);
+  window.promptDock.windowTransitionReady(token);
 });
 
 (async function init() {

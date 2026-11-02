@@ -9,7 +9,7 @@
 一个本地优先的 Prompt 管理与快捷调用工具。<br>
 文字、变体、参考图片和常用关键词，在一个桌面空间里整理。
 
-[下载 Windows 版](https://github.com/Kesister/prompt-dock/releases/latest) · [下载 Mac 版](https://github.com/Kesister/prompt-dock/releases/tag/mac-v0.11.2) · [视频演示](#演示) · [快速开始](#快速开始) · [使用指南](docs/USER-GUIDE.md) · [反馈问题](https://github.com/Kesister/prompt-dock/issues)
+[下载 Windows 版](https://github.com/Kesister/prompt-dock/releases/latest) · [下载 Mac 版](https://github.com/Kesister/prompt-dock/releases/tag/mac-v0.11.2) · [在线教程](https://kesister.github.io/prompt-dock/) · [视频演示](#演示) · [快速开始](#快速开始) · [使用指南](docs/USER-GUIDE.md) · [反馈问题](https://github.com/Kesister/prompt-dock/issues)
 
 </div>
 
@@ -18,6 +18,8 @@
 不想每次都翻聊天记录、找旧文档，再复制同一段提示词？把它收进 Prompt Dock：加上标签和使用说明，保留不同版本与参考图片；下次搜索、预览，再复制或插入到输入框。
 
 无需注册账户，也无需配置 AI API。Prompt Dock **不是 AI 聊天客户端**，不会替你调用模型；它负责让你自己的内容更容易找到、复用。
+
+> **使用教程：** [点击查看完整教程](https://kesister.github.io/prompt-dock/)，包含操作演示、快捷键和常见问题。
 
 ## 演示
 
@@ -33,9 +35,11 @@ Mac 用户请前往 [Mac 下载页](https://github.com/Kesister/prompt-dock/rele
 
 | 平台 | 当前状态 |
 | --- | --- |
-| Windows x64 | v0.11.1 安装版，提供安装向导、桌面快捷方式和内置更新 |
+| Windows x64 | v0.11.4 安装版，提供安装向导、桌面快捷方式和内置更新 |
 | macOS Apple Silicon | v0.11.2 预览版，提供完整安装包；支持 macOS 12+，需手动下载更新 |
 | Linux | 暂未提供发行包 |
+
+本地待验收的 Mac v0.11.4（build 11401）已同步 Windows v0.11.2–v0.11.4 的过渡、小窗布局、快捷键恢复及弹窗拖选修复，尚未发布。上表保留公开发行状态。
 
 Windows 与 Mac 共用源码，按平台独立发布修复版本；两端版本号可能不同。
 

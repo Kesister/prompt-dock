@@ -1,4 +1,4 @@
-const { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, Tray, nativeImage, net, protocol, screen, session, shell } = require("electron");
+const { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, Tray, nativeImage, net, powerMonitor, protocol, screen, session, shell } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const { pathToFileURL } = require("url");
@@ -12,13 +12,17 @@ const { SlashController } = require("./slash-controller");
 const slashCore = require("./slash-core");
 const { resolveAuthorLink, authorInfo } = require("./author-links");
 const { UpdateController, RELEASE_URL } = require("./update-controller");
+const { WindowTransition } = require("./window-transition");
+const { ShortcutRegistration } = require("./shortcut-registration");
 const os = require("os");
 const smokeAuthorLinks = [];
 
 let mainWindow;
 let tray;
-let activeShortcut = "";
+const launcherShortcut = new ShortcutRegistration({ globalShortcut, callback: showLauncher });
 let normalWindowBounds = null;
+let compactModeTask = null;
+let windowTransition;
 let pasteQueue = Promise.resolve();
 let storage;
 const IS_MAC = process.platform === "darwin";
@@ -40,6 +44,7 @@ if (testProfile) {
   if (!path.isAbsolute(testProfile)) throw new Error("PROMPT_DOCK_USER_DATA must be absolute");
   app.setPath("userData", testProfile);
 }
+const PREVIEW_PROFILE = require('./package.json').promptDockPreview === true;
 if (SMOKE_TEST) {
   app.disableHardwareAcceleration();
   if (!testProfile) app.setPath("userData", path.join(app.getPath("temp"), `prompt-dock-smoke-test-${randomUUID()}`));
@@ -47,6 +52,12 @@ if (SMOKE_TEST) {
     console.error(`SMOKE_FAIL:${error?.stack || error}`);
     app.exit(2);
   });
+}
+if (PREVIEW_PROFILE && !SMOKE_TEST && !testProfile) {
+  const directory = process.env.PORTABLE_EXECUTABLE_DIR || path.dirname(app.getPath('exe'));
+  const profile = path.join(directory, 'Prompt-Dock-motion-preview-data');
+  fs.mkdirSync(profile, { recursive: true });
+  app.setPath('userData', profile);
 }
 // Acquire the profile lock before opening storage or registering shortcuts.
 if (!app.requestSingleInstanceLock()) {
@@ -84,7 +95,7 @@ function initialState() {
       shortcut: DEFAULT_SHORTCUT,
       newPromptShortcut: IS_MAC ? "Command+N" : "Control+N",
       slash: slashCore.settings(),
-      directPaste: true,
+      directPaste: !PREVIEW_PROFILE,
       launchAtLogin: false,
       alwaysOnTop: false,
       leftCollapsed: false,
@@ -451,7 +462,7 @@ function sendUpdateStatus() {
 
 function scheduleUpdateCheck() {
   clearTimeout(updateTimer);
-  if (SMOKE_TEST || !updatePreferences.autoCheck) return;
+  if (SMOKE_TEST || PREVIEW_PROFILE || !updatePreferences.autoCheck) return;
   updateTimer = setTimeout(async () => {
     await updateController.check();
     if (updatePreferences.autoCheck) {
@@ -467,7 +478,7 @@ function initializeUpdates() {
     const saved = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'update-preferences.json'), 'utf8'));
     updatePreferences.autoCheck = saved.autoCheck !== false;
   } catch {}
-  const enabled = ['win32', 'darwin'].includes(process.platform) && app.isPackaged && !SMOKE_TEST;
+  const enabled = ['win32', 'darwin'].includes(process.platform) && app.isPackaged && !SMOKE_TEST && !PREVIEW_PROFILE;
   updateController = new UpdateController({
     updater: !enabled ? null : IS_MAC
       ? new MacReleaseUpdater({ fetch: (...args) => net.fetch(...args), arch: process.arch, currentVersion: app.getVersion() })
@@ -662,16 +673,14 @@ function ensureWindowOnScreen() {
   });
 }
 
-function registerShortcut(shortcut) {
+function registerShortcut(shortcut, { restore = false } = {}) {
   if (!shortcut || typeof shortcut !== "string") {
     return { ok: false, message: "快捷键格式无效" };
   }
-  if (shortcut === activeShortcut) return { ok: true, shortcut };
-  let ok = false;
-  try { ok = globalShortcut.register(shortcut, showLauncher); } catch {}
-  if (!ok) return { ok: false, message: "快捷键无效或已被其他程序占用，请换一个组合。" };
-  if (activeShortcut) globalShortcut.unregister(activeShortcut);
-  activeShortcut = shortcut;
+  const result = restore ? launcherShortcut.restore(shortcut) : launcherShortcut.set(shortcut);
+  if (!result.ok) {
+    return { ok: false, message: "这个快捷键已被其他程序占用，请换一个组合。" };
+  }
   return { ok: true, shortcut };
 }
 
@@ -684,6 +693,7 @@ function createWindow() {
   const initialCompactWidth = Math.max(360, Number(savedCompactSize.width) || 420);
   const initialCompactHeight = Math.max(360, Number(savedCompactSize.height) || 520);
   mainWindow = new BrowserWindow({
+    title: PREVIEW_PROFILE ? 'Prompt Dock · 动画便携测试' : 'Prompt Dock',
     width: compactMode ? initialCompactWidth : Math.max(840, normalWindowBounds?.width || 1080),
     height: compactMode ? initialCompactHeight : Math.max(560, normalWindowBounds?.height || 700),
     minWidth: compactMode ? 360 : 840,
@@ -697,10 +707,14 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      offscreen: SMOKE_TEST,
+      backgroundThrottling: !SMOKE_TEST
     }
   });
   if (testProfile) mainWindow.on("page-title-updated", event => { event.preventDefault(); mainWindow.setTitle("Prompt Dock — 隔离测试"); });
+  windowTransition = new WindowTransition({ window: mainWindow, BrowserWindow, ipcMain });
+  if (PREVIEW_PROFILE) mainWindow.on('page-title-updated', event => event.preventDefault());
   mainWindow.loadFile("index.html");
   mainWindow.on("resize", scheduleWindowSave);
   mainWindow.once("ready-to-show", () => {
@@ -845,6 +859,16 @@ function createWindow() {
     setCompactMode(false);
     await new Promise((resolve) => setTimeout(resolve, 80));
     const result = await mainWindow.webContents.executeJavaScript(`(async () => {
+      const waitForVisual = async element => {
+        await Promise.race([
+          Promise.allSettled(element.getAnimations().map(animation => animation.finished)),
+          new Promise(resolve => setTimeout(resolve, 1200))
+        ]);
+      };
+      const waitForPaint = () => Promise.race([
+        new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Smoke renderer did not paint')), 1500))
+      ]);
       state.prompts[0].images = ${JSON.stringify(storedArchiveState.prompts[0].images)};
       state.prompts[0].imageThumbnails = ${JSON.stringify(storedArchiveState.prompts[0].imageThumbnails)};
       state.prompts[0].defaultVariantTitle = "通用版";
@@ -937,6 +961,7 @@ function createWindow() {
       const lightboxImage = document.querySelector("#lightboxImage");
       if (!lightboxImage.complete) await new Promise((resolve) => lightboxImage.addEventListener("load", resolve, { once: true }));
       const lightboxImageActionsAvailable = Boolean(document.querySelector("#lightboxCopyImage") && document.querySelector("#lightboxSaveImage"));
+      await waitForVisual(document.querySelector("#imageLightbox"));
       const lightboxCopyRect = document.querySelector("#lightboxCopyImage").getBoundingClientRect();
       const lightboxCopyHitArea = lightboxCopyRect.width >= 100 && lightboxCopyRect.height >= 38;
       document.querySelector("#lightboxCopyImage").dispatchEvent(new PointerEvent("pointerdown", { button: 0, bubbles: true, cancelable: true }));
@@ -1064,7 +1089,8 @@ function createWindow() {
         && promptList.getBoundingClientRect().bottom <= window.innerHeight;
       renderAll();
       document.querySelector("#privacyModeBtn").click();
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await persistQueue;
+      await waitForPaint();
       const privacyModeMasksPromptText = document.body.classList.contains("privacy-mode")
         && parseFloat(getComputedStyle(document.querySelector(".prompt-card .card-body p")).height) <= 10
         && getComputedStyle(document.querySelector("#previewText")).color === "rgba(0, 0, 0, 0)"
@@ -1072,7 +1098,18 @@ function createWindow() {
       const privacyModePersists = (await window.promptDock.getState()).settings.privacyMode === true;
       state.settings.privacyHideImages = true;
       applyPrivacyMode();
-      const privacyModeCanHideImages = getComputedStyle(document.querySelector(".prompt-card .thumb img")).visibility === "hidden";
+      const privacyImage = document.querySelector(".prompt-card .thumb img");
+      privacyImage.closest('.prompt-card').scrollIntoView({ block: 'nearest' });
+      privacyImage.getBoundingClientRect();
+      await waitForPaint();
+      const privacyImageDiagnostic = {
+        enabled: state.settings.privacyMode,
+        hideImages: state.settings.privacyHideImages,
+        classes: document.body.className,
+        visibility: getComputedStyle(privacyImage).visibility
+      };
+      const privacyModeCanHideImages = privacyImageDiagnostic.enabled && privacyImageDiagnostic.hideImages
+        && privacyImageDiagnostic.visibility === "hidden";
       document.querySelector("#privacyModeBtn").click();
       await new Promise((resolve) => setTimeout(resolve, 100));
       state.settings.privacyHideImages = false;
@@ -1239,6 +1276,7 @@ function createWindow() {
       document.querySelector("#authorBtn").click();
       await new Promise((resolve) => setTimeout(resolve, 120));
       const authorDialog = document.querySelector("#authorDialog");
+      await waitForVisual(authorDialog);
       const authorAvatar = document.querySelector("#authorAvatar");
       if (!authorAvatar.complete) await new Promise((resolve) => authorAvatar.addEventListener("load", resolve, { once: true }));
       const authorPageWorks = authorDialog.open
@@ -1284,8 +1322,13 @@ function createWindow() {
       const cacheClearResult = await window.promptDock.clearCache();
       const cacheMaintenanceWorks = cacheClearResult.ok === true && cacheClearResult.bytes === 0;
       document.querySelector('[data-close-dialog="settingsDialog"]').click();
+      const waitForCompactMode = async () => {
+        const deadline = performance.now() + 5000;
+        while (compactModeSwitching && performance.now() < deadline) await new Promise(resolve => setTimeout(resolve, 16));
+        if (compactModeSwitching) throw new Error('Compact mode did not settle');
+      };
       document.querySelector("#compactBtn").click();
-      await new Promise((resolve) => setTimeout(resolve, 220));
+      await waitForCompactMode();
       const compactEnabled = document.querySelector(".app-shell").classList.contains("compact-mode");
       const compactPaneResizersHidden = [...document.querySelectorAll(".pane-resizer")].every((handle) => getComputedStyle(handle).display === "none");
       document.querySelector("#toggleLeftBtn").click();
@@ -1301,7 +1344,7 @@ function createWindow() {
       await new Promise((resolve) => setTimeout(resolve, 190));
       const compactVariantPopoverDismissed = document.querySelector("#variantPopover").classList.contains("hidden");
       document.querySelector("#compactBtn").click();
-      await new Promise((resolve) => setTimeout(resolve, 220));
+      await waitForCompactMode();
       const firstCard = document.querySelector(".prompt-card");
       const firstPrompt = state.prompts.find((prompt) => prompt.id === firstCard.dataset.id);
       const useCountBefore = firstPrompt.useCount || 0;
@@ -1532,6 +1575,7 @@ function createWindow() {
         privacyModeMasksPromptText,
         privacyModePersists,
         privacyModeCanHideImages,
+        privacyImageDiagnostic,
         settingsPinnedInViewport,
         sidebarTagsScrollable,
         scrollbarRevealOnScroll,
@@ -1772,7 +1816,7 @@ function createWindow() {
     const registered = registerShortcut(firstShortcut);
     globalShortcut.register(occupiedShortcut, () => {});
     const conflict = registerShortcut(occupiedShortcut);
-    result.shortcutConflictKeepsPrevious = registered.ok && !conflict.ok && activeShortcut === firstShortcut && globalShortcut.isRegistered(firstShortcut);
+    result.shortcutConflictKeepsPrevious = registered.ok && !conflict.ok && launcherShortcut.shortcut === firstShortcut && globalShortcut.isRegistered(firstShortcut);
     result.invalidShortcutDoesNotThrow = !registerShortcut("Not+A+Real+Key").ok;
     globalShortcut.unregister(occupiedShortcut);
     const failedChecks = Object.entries(result).filter(([, value]) => value === false).map(([key]) => key);
@@ -1876,6 +1920,60 @@ function createWindow() {
       && snapshotManifest.prompts.every(prompt => prompt.imageRefs.every(ref => snapshotArchive.getEntry(ref)));
     updateController = savedUpdateController;
     if (!result.updateCheckUi || !result.updateDownloadUi || !result.updateLaterDoesNotInstall || !result.updateBackupAndInstall) throw new Error('Update smoke test failed');
+    // Send mouse events into this test renderer only. Dragging a text selection
+    // outside a modal must not be mistaken for clicking its backdrop.
+    console.log('SMOKE_PHASE:dialog-drag');
+    mainWindow.setBounds({ width: 1080, height: 760 });
+    const smokePointerGesture = async (from, to = from) => {
+      mainWindow.webContents.sendInputEvent({ type: 'mouseDown', ...from, button: 'left', clickCount: 1 });
+      await new Promise(resolve => setTimeout(resolve, 30));
+      mainWindow.webContents.sendInputEvent({ type: 'mouseMove', ...to, modifiers: ['leftbuttondown'] });
+      await new Promise(resolve => setTimeout(resolve, 30));
+      mainWindow.webContents.sendInputEvent({ type: 'mouseUp', ...to, button: 'left', clickCount: 1 });
+      await new Promise(resolve => setTimeout(resolve, 80));
+    };
+    const smokeDialogPoints = (dialogId, fieldId) => mainWindow.webContents.executeJavaScript(`(() => {
+      const d = document.getElementById(${JSON.stringify(dialogId)}).getBoundingClientRect();
+      const f = document.getElementById(${JSON.stringify(fieldId)}).getBoundingClientRect();
+      return { inside: { x: Math.round(f.left + 140), y: Math.round(f.top + 18) },
+        outside: { x: Math.max(2, Math.round(d.left - 16)), y: Math.round(f.top + 18) } };
+    })()`);
+    await mainWindow.webContents.executeJavaScript(`(async () => {
+      document.querySelectorAll('dialog[open]').forEach(d => d.close());
+      document.getElementById('newPromptBtn').click();
+      document.getElementById('titleField').value = '未保存的拖选测试标题';
+      document.getElementById('contentField').value = '这是一段尚未保存的 Prompt 内容，用来验证向外拖选文字。';
+      await new Promise(resolve => setTimeout(resolve, 350));
+    })()`);
+    const editorPoints = await smokeDialogPoints('editorDialog', 'contentField');
+    await smokePointerGesture(editorPoints.inside, editorPoints.outside);
+    result.editorDragOutsideKeepsOpen = await mainWindow.webContents.executeJavaScript("document.getElementById('editorDialog').open");
+    result.editorDragOutsideKeepsDraft = await mainWindow.webContents.executeJavaScript(`
+      document.getElementById('titleField').value === '未保存的拖选测试标题'
+      && document.getElementById('contentField').value === '这是一段尚未保存的 Prompt 内容，用来验证向外拖选文字。'
+      && document.getElementById('contentField').selectionEnd > document.getElementById('contentField').selectionStart`);
+    await smokePointerGesture(editorPoints.outside);
+    result.editorBackdropClickCloses = await mainWindow.webContents.executeJavaScript("!document.getElementById('editorDialog').open");
+    await mainWindow.webContents.executeJavaScript("document.getElementById('newPromptBtn').click()");
+    await new Promise(resolve => setTimeout(resolve, 350));
+    const reopenedPoints = await smokeDialogPoints('editorDialog', 'contentField');
+    await smokePointerGesture(reopenedPoints.outside, reopenedPoints.inside);
+    result.editorBackdropDragInsideKeepsOpen = await mainWindow.webContents.executeJavaScript("document.getElementById('editorDialog').open");
+    await mainWindow.webContents.executeJavaScript(`(async () => {
+      document.getElementById('editorDialog').close();
+      document.getElementById('vocabularyBulkDialog').showModal();
+      document.getElementById('vocabularyBulkText').value = '这是一段尚未保存的词条内容，用来验证其他弹窗也不会误关闭。';
+      await new Promise(resolve => setTimeout(resolve, 350));
+    })()`);
+    const vocabularyPoints = await smokeDialogPoints('vocabularyBulkDialog', 'vocabularyBulkText');
+    await smokePointerGesture(vocabularyPoints.inside, vocabularyPoints.outside);
+    result.editableDialogDragOutsideKeepsOpen = await mainWindow.webContents.executeJavaScript("document.getElementById('vocabularyBulkDialog').open");
+    const closePoint = await mainWindow.webContents.executeJavaScript(`(() => {
+      const r = document.querySelector('#vocabularyBulkDialog .dialog-head [data-close-dialog]').getBoundingClientRect();
+      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+    })()`);
+    await smokePointerGesture(closePoint);
+    result.dialogExplicitCloseStillWorks = await mainWindow.webContents.executeJavaScript("!document.getElementById('vocabularyBulkDialog').open");
     fs.writeFileSync(path.join(app.getPath("userData"), "smoke-result.json"), JSON.stringify(result, null, 2));
     console.log(`SMOKE_OK:${JSON.stringify(result)}`);
     app.isQuitting = true;
@@ -1986,43 +2084,64 @@ async function openMacAccessibility() {
   return { ok: true };
 }
 
+function compactTarget(enabled, requestedSize = null) {
+  const current = mainWindow.getBounds();
+  if (!enabled) return normalWindowBounds || { ...current, width: 1080, height: 700 };
+  const display = screen.getDisplayMatching(current);
+  const saved = requestedSize || readState().settings.compactWindowSize || {};
+  const width = Math.min(display.workArea.width, Math.max(360, Number(saved.width) || 420));
+  const height = Math.min(display.workArea.height, Math.max(360, Number(saved.height) || 520));
+  return { x: current.x + Math.max(0, current.width - width), y: current.y, width, height };
+}
+
 function setCompactMode(enabled, requestedSize = null) {
   const next = Boolean(enabled);
+  const current = mainWindow.getBounds();
   saveWindowSize();
-  if (next && !windowMode) normalWindowBounds = mainWindow.getBounds();
+  if (next && !windowMode) normalWindowBounds = current;
   windowMode = next;
+  let target;
+  let compactWindowSize;
   if (next) {
-    if (!normalWindowBounds) normalWindowBounds = mainWindow.getBounds();
-    const current = mainWindow.getBounds();
+    if (!normalWindowBounds) normalWindowBounds = current;
     const display = screen.getDisplayMatching(current);
     const saved = requestedSize || readState().settings.compactWindowSize || {};
     const width = Math.min(display.workArea.width, Math.max(360, Number(saved.width) || 420));
     const height = Math.min(display.workArea.height, Math.max(360, Number(saved.height) || 520));
     mainWindow.setMinimumSize(360, 360);
-    mainWindow.setBounds({
+    target = {
       x: current.x + Math.max(0, current.width - width),
       y: current.y,
       width,
       height
-    }, true);
-    mainWindow.setAlwaysOnTop(true, "floating");
-    return { width, height };
-  } else {
-    const compactBounds = mainWindow.getBounds();
-    const compactWindowSize = {
-      width: Math.max(360, compactBounds.width),
-      height: Math.max(360, compactBounds.height)
     };
-    mainWindow.setMinimumSize(840, 560);
-    mainWindow.setBounds(normalWindowBounds || {
-      x: mainWindow.getBounds().x,
-      y: mainWindow.getBounds().y,
+    mainWindow.setAlwaysOnTop(true, "floating");
+    compactWindowSize = { width, height };
+  } else {
+    compactWindowSize = {
+      width: Math.max(360, current.width),
+      height: Math.max(360, current.height)
+    };
+    target = normalWindowBounds || {
+      x: current.x,
+      y: current.y,
       width: 1080,
       height: 700
-    }, true);
+    };
+  }
+  const complete = () => {
+    if (mainWindow.isDestroyed()) return compactWindowSize;
+    if (next) {
+      const bounds = mainWindow.getBounds();
+      return { width: bounds.width, height: bounds.height };
+    }
+    // Raising the minimum before the expansion would cause an immediate jump.
+    mainWindow.setMinimumSize(840, 560);
     normalWindowBounds = null;
     return compactWindowSize;
-  }
+  };
+  mainWindow.setBounds(target, false);
+  return complete();
 }
 
 app.whenReady().then(async () => {
@@ -2114,21 +2233,31 @@ app.whenReady().then(async () => {
   } });
   if (SMOKE_TEST) return;
   createTray();
+  if (PREVIEW_PROFILE) return;
   const state = readState();
-  const result = process.env.PROMPT_DOCK_NATIVE_TEST ? { ok: true } : registerShortcut(state.settings.shortcut || DEFAULT_SHORTCUT);
+  const result = process.env.PROMPT_DOCK_NATIVE_TEST ? { ok: true } : registerShortcut(state.settings.shortcut || DEFAULT_SHORTCUT, { restore: true });
   if (!result.ok) {
     // A temporary conflict must never overwrite the user's saved preference.
     dialog.showMessageBox(mainWindow, {
       type: "warning",
       title: "快捷键暂时不可用",
       message: `无法注册唤出快捷键 ${state.settings.shortcut || DEFAULT_SHORTCUT}`,
-      detail: "快捷键可能被其他程序占用。你的设置已保留，可以通过托盘打开 Prompt Dock，在设置中更换快捷键，或关闭冲突程序后重新启动。",
+      detail: "快捷键可能被其他程序暂时占用。你的设置已保留，软件会自动重试；也可以通过托盘打开 Prompt Dock，在设置中更换快捷键。",
       buttons: ["知道了"]
     });
   }
-  slashController.configure(state.settings.slash, [state.settings.shortcut, state.settings.newPromptShortcut]).then(result => {
-    if (!result.ok) { slashController.message = result.message; slashStatusChanged(); }
+  slashController.configure(state.settings.slash, [state.settings.shortcut, state.settings.newPromptShortcut], { restore: true }).then(result => {
+    if (!result.ok) {
+      if (!slashController.shortcutRegistration.error) slashController.message = result.message;
+      slashStatusChanged();
+    }
   });
+  const recoverShortcuts = () => {
+    launcherShortcut.recover();
+    slashController?.recoverShortcut();
+  };
+  powerMonitor.on("resume", recoverShortcuts);
+  powerMonitor.on("unlock-screen", recoverShortcuts);
 });
 
 app.on("window-all-closed", (event) => event.preventDefault());
@@ -2138,6 +2267,7 @@ app.on("will-quit", () => {
   clearTimeout(windowSaveTimer);
   macHelper?.dispose();
   clearTimeout(updateTimer);
+  launcherShortcut.dispose();
   slashController?.dispose();
   globalShortcut.unregisterAll();
   storage?.close();
@@ -2251,9 +2381,21 @@ ipcMain.handle("window:set-always-on-top", (_, enabled) => {
   mainWindow.setAlwaysOnTop(Boolean(enabled), "floating");
   return { ok: true };
 });
-ipcMain.handle("window:set-compact-mode", (_, enabled, savedSize) => {
-  const compactWindowSize = setCompactMode(enabled, savedSize);
-  return { ok: true, compactWindowSize };
+ipcMain.handle("window:prepare-compact-mode", async (event, enabled, savedSize) => {
+  if (event.sender !== mainWindow.webContents || compactModeTask || windowTransition.active) return { ok: false };
+  return { ok: true, token: await windowTransition.prepare(compactTarget(Boolean(enabled), savedSize)) };
+});
+ipcMain.handle("window:set-compact-mode", async (event, enabled, savedSize, animate, token) => {
+  if (event.sender !== mainWindow.webContents) return { ok: false };
+  if (compactModeTask) return { ok: false, message: "窗口正在切换。" };
+  const resize = () => setCompactMode(enabled, savedSize);
+  const task = token ? windowTransition.run(token, resize) : Promise.resolve(resize());
+  compactModeTask = task;
+  try {
+    return { ok: true, compactWindowSize: await task };
+  } finally {
+    if (compactModeTask === task) compactModeTask = null;
+  }
 });
 ipcMain.handle("window:get-bounds", () => mainWindow.getBounds());
 ipcMain.handle("window:quit", () => {
