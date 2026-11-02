@@ -1,6 +1,6 @@
 # Mac 使用说明
 
-[返回首页](../README.md) · [下载 Mac 版](https://github.com/Kesister/prompt-dock/releases/tag/mac-v0.11.2)
+[返回首页](../README.md) · [下载 Mac 版](https://github.com/Kesister/prompt-dock/releases/tag/mac-v0.11.4)
 
 Prompt Dock Mac 版支持整理、搜索、预览和复用 Prompt，可保存正文、不同版本、参考图片和常用关键词。资料保存在本机，导出的 `.promptdock` 文件可在 Windows 与 Mac 之间迁移。
 
