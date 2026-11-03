@@ -23,9 +23,9 @@
 
 ## 演示
 
-https://github.com/user-attachments/assets/b3273881-3a8d-404b-804e-53ecfa3514eb
+https://github.com/user-attachments/assets/9cae244b-3fae-4f23-837d-4f69075d1a1d
 
-约 1 分钟，看看 Prompt 整理、快捷调用与词库的使用方式。演示中的内容仅作示例，不代表安装包附带完整素材库。
+25 秒，看看 Prompt 整理、快捷调用与词库的使用方式。演示中的内容仅作示例，不代表安装包附带完整素材库。
 
 ## 下载与安装
 
